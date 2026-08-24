@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>Project Dynamo — Task Log</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><i data-lucide="zap"></i></div>
+      <div>
+        <h1 class="brand-name">Project Dynamo</h1>
+        <p class="brand-sub">Task &amp; earnings log</p>
+      </div>
+    </div>
+
+    <div class="masthead-actions">
+      <button class="sync-chip" id="syncChip" type="button" title="Connection status">
+        <span class="sync-dot" id="syncDot"></span>
+        <span id="syncLabel">Connecting</span>
+      </button>
+
+      <div class="field-inline">
+        <label class="sr-only" for="currencySelect">Display currency</label>
+        <select id="currencySelect" class="select select-bare" title="Display currency">
+          <option value="USD">USD</option>
+          <option value="INR">INR</option>
+        </select>
+      </div>
+
+      <button class="btn-icon" id="btnSoundToggle" type="button" title="Sound">
+        <i data-lucide="volume-2" id="soundIcon"></i>
+      </button>
+
+      <button class="btn btn-primary" id="btnNewTask" type="button">
+        <i data-lucide="plus"></i><span>New task</span>
+      </button>
+    </div>
+
+  </div>
+</header>
+
+<main class="page">
+
+  <!-- ---------- Summary ---------- -->
+  <section class="stat-row" aria-label="Summary">
+
+    <article class="stat">
+      <div class="stat-top">
+        <p class="eyebrow">Total earned</p>
+        <span class="stat-icon stat-icon-accent"><i data-lucide="wallet"></i></span>
+      </div>
+      <p class="stat-value"><span class="cur-sym">$</span><span id="statTotal">0.00</span></p>
+      <p class="stat-note">
+        <span id="statApproved">$0.00</span> approved
+        <span class="sep">·</span>
+        <span id="statPending" class="text-pending">$0.00</span> in review
+      </p>
+      <p class="stat-note" id="statIncentive" hidden></p>
+      <p class="stat-note" id="statPipeline" hidden></p>
+      <div class="spark" id="sparkTotal"></div>
+    </article>
+
+    <article class="stat">
+      <div class="stat-top">
+        <p class="eyebrow">Acceptance rate</p>
+        <span class="stat-icon stat-icon-accepted"><i data-lucide="badge-check"></i></span>
+      </div>
+      <p class="stat-value"><span id="statAcceptance">0</span><span class="stat-unit">%</span></p>
+      <div class="meter" id="statMeter" role="img" aria-label="Status breakdown">
+        <span class="meter-seg is-accepted" id="meterAccepted"></span>
+        <span class="meter-seg is-pending"  id="meterPending"></span>
+        <span class="meter-seg is-rejected" id="meterRejected"></span>
+        <span class="meter-seg is-progress" id="meterProgress"></span>
+      </div>
+      <p class="stat-note" id="statCounts">No tasks yet</p>
+      <div class="spark" id="sparkAcceptance"></div>
+    </article>
+
+    <article class="stat">
+      <div class="stat-top">
+        <p class="eyebrow">Hours</p>
+        <span class="stat-icon stat-icon-cool"><i data-lucide="clock-3"></i></span>
+      </div>
+      <p class="stat-value"><span id="statPaidHours">0.0</span><span class="stat-unit">billed</span></p>
+      <p class="stat-note">
+        <span id="statActualHours">0.0h</span> actually worked
+        <span class="sep">·</span>
+        <span id="statVariance">—</span>
+      </p>
+      <div class="spark" id="sparkHours"></div>
+    </article>
+
+    <article class="stat">
+      <div class="stat-top">
+        <p class="eyebrow">Effective rate</p>
+        <span class="stat-icon stat-icon-warm"><i data-lucide="gauge"></i></span>
+      </div>
+      <p class="stat-value"><span class="cur-sym">$</span><span id="statEffRate">0.00</span><span class="stat-unit">/hr</span></p>
+      <p class="stat-note">
+        Per hour actually worked
+        <span class="sep">·</span>
+        <span id="statBilledRate">$0.00/hr</span> billed
+      </p>
+      <div class="spark" id="sparkEffRate"></div>
+    </article>
+
+  </section>
+
+  <!-- ---------- Secondary KPIs ---------- -->
+  <section class="kpi-row" aria-label="Additional metrics">
+
+    <article class="kpi">
+      <span class="kpi-icon kpi-icon-accent"><i data-lucide="calendar-days"></i></span>
+      <div class="kpi-body">
+        <p class="kpi-label">This week</p>
+        <p class="kpi-value"><span class="cur-sym">$</span><span id="kpiWeekAmount">0.00</span></p>
+        <p class="kpi-note" id="kpiWeekTrend">No data yet</p>
+      </div>
+    </article>
+
+    <article class="kpi">
+      <span class="kpi-icon kpi-icon-warm"><i data-lucide="flame"></i></span>
+      <div class="kpi-body">
+        <p class="kpi-label">Streak</p>
+        <p class="kpi-value"><span id="kpiStreak">0</span><span class="stat-unit">days</span></p>
+        <p class="kpi-note" id="kpiStreakBest">Best — days</p>
+      </div>
+    </article>
+
+    <article class="kpi">
+      <span class="kpi-icon kpi-icon-accepted"><i data-lucide="layers"></i></span>
+      <div class="kpi-body">
+        <p class="kpi-label">Avg per task</p>
+        <p class="kpi-value"><span class="cur-sym">$</span><span id="kpiAvgTask">0.00</span></p>
+        <p class="kpi-note" id="kpiAvgTaskCount">No tasks yet</p>
+      </div>
+    </article>
+
+    <article class="kpi">
+      <span class="kpi-icon kpi-icon-cool"><i data-lucide="server"></i></span>
+      <div class="kpi-body">
+        <p class="kpi-label">Top platform</p>
+        <p class="kpi-value kpi-value-text" id="kpiTopPlatform">—</p>
+        <p class="kpi-note" id="kpiTopPlatformShare">No data yet</p>
+      </div>
+    </article>
+
+  </section>
+
+  <!-- ---------- Charts ---------- -->
+  <section class="chart-row">
+
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h2 class="panel-title">Earnings over time</h2>
+          <p class="panel-sub">Amount logged per day, with hours worked</p>
+        </div>
+        <div class="segmented" id="rangeToggle" role="group" aria-label="Time range">
+          <button type="button" class="seg is-active" data-range="7">7 days</button>
+          <button type="button" class="seg" data-range="30">30 days</button>
+          <button type="button" class="seg" data-range="all">All</button>
+        </div>
+      </div>
+      <div class="chart-box"><canvas id="timelineChart"></canvas></div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h2 class="panel-title">By category</h2>
+          <p class="panel-sub">Where the work goes</p>
+        </div>
+        <div class="segmented" id="categoryToggle" role="group" aria-label="Category metric">
+          <button type="button" class="seg is-active" data-metric="amount">Earnings</button>
+          <button type="button" class="seg" data-metric="count">Tasks</button>
+        </div>
+      </div>
+      <div class="chart-box chart-box-split">
+        <div class="donut-wrap"><canvas id="categoryChart"></canvas></div>
+        <ul class="legend" id="categoryLegend"></ul>
+      </div>
+    </article>
+
+  </section>
+
+  <!-- ---------- More visuals ---------- -->
+  <section class="chart-row">
+
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h2 class="panel-title">Activity</h2>
+          <p class="panel-sub">Daily earnings, last 14 weeks</p>
+        </div>
+        <div class="heatmap-scale" aria-hidden="true">
+          <span>Less</span>
+          <span class="heatmap-swatch" data-level="0"></span>
+          <span class="heatmap-swatch" data-level="1"></span>
+          <span class="heatmap-swatch" data-level="2"></span>
+          <span class="heatmap-swatch" data-level="3"></span>
+          <span class="heatmap-swatch" data-level="4"></span>
+          <span>More</span>
+        </div>
+      </div>
+      <div class="heatmap-box">
+        <div class="heatmap-days" aria-hidden="true"><span>Mon</span><span>Wed</span><span>Fri</span></div>
+        <div class="heatmap-grid" id="activityHeatmap"></div>
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h2 class="panel-title">By platform</h2>
+          <p class="panel-sub">Earnings per platform</p>
+        </div>
+      </div>
+      <div class="chart-box chart-box-bar">
+        <canvas id="platformChart"></canvas>
+        <p class="chart-empty" id="platformEmpty" hidden>No data yet</p>
+      </div>
+    </article>
+
+  </section>
+
+  <!-- ---------- Task log ---------- -->
+  <section class="panel">
+
+    <div class="toolbar">
+      <div class="search">
+        <i data-lucide="search" class="search-icon"></i>
+        <input type="search" id="searchInput" placeholder="Search tasks, categories, platforms, notes" autocomplete="off" />
+      </div>
+
+      <div class="toolbar-filters">
+        <select id="filterStatus" class="select" aria-label="Filter by status">
+          <option value="ALL">All statuses</option>
+          <option value="IN_PROGRESS">In progress</option>
+          <option value="PENDING">In review</option>
+          <option value="ACCEPTED">Accepted</option>
+          <option value="REJECTED">Rejected</option>
+        </select>
+
+        <select id="filterCategory" class="select" aria-label="Filter by category">
+          <option value="ALL">All categories</option>
+        </select>
+
+        <select id="filterPlatform" class="select" aria-label="Filter by platform">
+          <option value="ALL">All platforms</option>
+        </select>
+
+        <select id="sortBy" class="select" aria-label="Sort">
+          <option value="date-desc">Newest first</option>
+          <option value="date-asc">Oldest first</option>
+          <option value="amount-desc">Highest amount</option>
+          <option value="amount-asc">Lowest amount</option>
+          <option value="rate-desc">Best effective rate</option>
+          <option value="paidHours-desc">Most hours billed</option>
+          <option value="timeSpent-desc">Most time spent</option>
+        </select>
+      </div>
+
+      <div class="toolbar-end">
+        <div class="view-toggle segmented" id="viewToggle" role="group" aria-label="View">
+          <button type="button" class="seg is-active" data-view="table" title="Table view"><i data-lucide="rows-3"></i></button>
+          <button type="button" class="seg" data-view="cards" title="Card view"><i data-lucide="layout-grid"></i></button>
+        </div>
+
+        <div class="menu-wrap">
+          <button class="btn-icon" id="btnDataMenu" type="button" title="Data options" aria-haspopup="true" aria-expanded="false">
+            <i data-lucide="ellipsis"></i>
+          </button>
+          <div class="menu" id="dataMenu" hidden>
+            <button type="button" data-action="export-csv"><i data-lucide="table"></i> Export CSV</button>
+            <button type="button" data-action="export-json"><i data-lucide="download"></i> Download backup</button>
+            <label class="menu-file">
+              <i data-lucide="upload"></i> Import file
+              <input type="file" id="importInput" accept=".json,.csv" hidden />
+            </label>
+            <div class="menu-rule"></div>
+            <button type="button" data-action="sample"><i data-lucide="sparkle"></i> Load sample data</button>
+            <button type="button" data-action="clear" class="is-danger"><i data-lucide="trash-2"></i> Delete all tasks</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="result-bar">
+      <span id="resultCount">No tasks</span>
+      <span class="sep">·</span>
+      <span id="resultTotal">$0.00 shown</span>
+    </div>
+
+    <div class="table-scroll" id="tableView">
+      <table class="log">
+        <thead>
+          <tr>
+            <th>Task</th>
+            <th>Date</th>
+            <th>Category</th>
+            <th class="num">Billed</th>
+            <th class="num">Worked</th>
+            <th class="num">Amount</th>
+            <th class="num">Rate</th>
+            <th>Status</th>
+            <th class="th-actions"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card-grid" id="cardView" hidden></div>
+
+    <div class="empty" id="emptyState" hidden>
+      <p class="empty-title" id="emptyTitle">No tasks yet</p>
+      <p class="empty-body" id="emptyBody">Log your first task to start tracking earnings and effective rate.</p>
+      <button class="btn btn-primary" id="btnEmptyNew" type="button">
+        <i data-lucide="plus"></i><span>New task</span>
+      </button>
+    </div>
+
+  </section>
+
+  <footer class="page-foot">
+    <span>Project Dynamo</span>
+    <span class="sep">·</span>
+    <span id="footStorage">Local cache</span>
+    <span class="sep">·</span>
+    <span id="footFx">Amounts stored in USD</span>
+  </footer>
+
+</main>
+
+<!-- ---------- Task dialog ---------- -->
+<div class="scrim" id="scrim" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
+
+    <div class="dialog-head">
+      <div>
+        <h2 class="dialog-title" id="dialogTitle">New task</h2>
+        <p class="dialog-sub">Amounts in <span id="dialogCurrency">USD</span></p>
+      </div>
+      <button class="btn-icon" id="btnCloseDialog" type="button" title="Close"><i data-lucide="x"></i></button>
+    </div>
+
+    <form id="taskForm" class="form" autocomplete="off">
+      <input type="hidden" id="fieldRowId" />
+
+      <div class="grid-2">
+        <div class="field">
+          <div class="field-head">
+            <label for="fieldRef">Task ID</label>
+            <button type="button" class="link-btn" id="btnGenerateRef">Generate</button>
+          </div>
+          <input type="text" id="fieldRef" class="input" placeholder="RLHF-9823" required />
+        </div>
+
+        <div class="field">
+          <div class="field-head"><label for="fieldPlatform">Platform</label></div>
+          <input type="text" id="fieldPlatform" class="input" placeholder="Handshake AI" list="platformList" />
+          <datalist id="platformList">
+            <option value="Handshake AI"></option>
+            <option value="DataAnnotation"></option>
+            <option value="Outlier AI"></option>
+            <option value="Alignerr"></option>
+            <option value="Invisible AI"></option>
+            <option value="Scale AI"></option>
+            <option value="Mindrift"></option>
+            <option value="Mercor"></option>
+            <option value="Turing"></option>
+          </datalist>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="field">
+          <div class="field-head"><label for="fieldCategory">Category</label></div>
+          <input type="text" id="fieldCategory" class="input" placeholder="RLHF &amp; Reasoning" list="categoryList" required />
+          <datalist id="categoryList">
+            <option value="Coding &amp; Software"></option>
+            <option value="RLHF &amp; Reasoning"></option>
+            <option value="Math &amp; Science"></option>
+            <option value="Factuality &amp; Grounding"></option>
+            <option value="Safety &amp; Red Teaming"></option>
+            <option value="Creative &amp; Writing"></option>
+            <option value="Multimodal &amp; Vision"></option>
+            <option value="Model Evaluation"></option>
+          </datalist>
+        </div>
+
+        <div class="field">
+          <div class="field-head"><label for="fieldSubCategory">Sub-category</label></div>
+          <input type="text" id="fieldSubCategory" class="input" placeholder="Multi-turn logic" list="subCategoryList" />
+          <datalist id="subCategoryList">
+            <option value="Python code generation"></option>
+            <option value="Code review &amp; fix"></option>
+            <option value="Multi-turn logic"></option>
+            <option value="Preference ranking"></option>
+            <option value="Hallucination detection"></option>
+            <option value="Prompt optimisation"></option>
+            <option value="Adversarial testing"></option>
+            <option value="Rubric grading"></option>
+          </datalist>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="field">
+          <div class="field-head">
+            <label for="fieldPaidHours">Hours billed</label>
+            <span class="hint" id="hintPaidHours">0h 00m</span>
+          </div>
+          <input type="number" step="0.01" min="0" id="fieldPaidHours" class="input" placeholder="1.25" required />
+        </div>
+
+        <div class="field">
+          <div class="field-head"><label for="fieldRate">Hourly rate</label></div>
+          <div class="input-affix">
+            <span class="affix cur-sym">$</span>
+            <input type="number" step="0.01" min="0" id="fieldRate" class="input" placeholder="40.00" />
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-head">
+            <label for="fieldAmount">Hourly pay</label>
+            <button type="button" class="link-btn" id="btnCalcAmount">Calculate</button>
+          </div>
+          <div class="input-affix">
+            <span class="affix cur-sym">$</span>
+            <input type="number" step="0.01" min="0" id="fieldAmount" class="input" placeholder="50.00" required />
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="field">
+          <div class="field-head">
+            <label for="fieldIncentive">Incentive</label>
+            <span class="hint" id="hintIncentive">On acceptance</span>
+          </div>
+          <div class="input-affix">
+            <span class="affix cur-sym">$</span>
+            <input type="number" step="0.01" min="0" id="fieldIncentive" class="input" placeholder="0.00" />
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-head">
+            <label for="fieldTimeSpent">Time actually spent</label>
+            <span class="hint" id="hintTimeSpent">0h 00m</span>
+          </div>
+          <input type="number" step="0.01" min="0" id="fieldTimeSpent" class="input" placeholder="0.85" required />
+        </div>
+
+        <div class="field">
+          <div class="field-head"><label for="fieldStatus">Status</label></div>
+          <select id="fieldStatus" class="select" required>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="PENDING" selected>In review</option>
+            <option value="ACCEPTED">Accepted</option>
+            <option value="REJECTED">Rejected</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="field">
+          <div class="field-head">
+            <label for="fieldDate">Date</label>
+            <button type="button" class="link-btn" id="btnDateToday">Today</button>
+          </div>
+          <input type="date" id="fieldDate" class="input" required />
+        </div>
+
+        <div class="field">
+          <div class="field-head">
+            <label for="fieldRepo">Repo link</label>
+            <span class="hint">Optional</span>
+          </div>
+          <div class="input-affix">
+            <span class="affix"><i data-lucide="link-2"></i></span>
+            <input type="text" id="fieldRepo" class="input input-icon" placeholder="github.com/you/project" inputmode="url" />
+          </div>
+        </div>
+      </div>
+
+      <p class="form-note" id="wipNote" hidden>
+        <i data-lucide="info"></i>
+        <span>In progress counts as pipeline, not earnings. Numbers here are estimates —
+        move it to In review once you log it and they start counting.</span>
+      </p>
+
+      <div class="readout" id="readout">
+        <div class="readout-item">
+          <span class="readout-label">Counts now</span>
+          <span class="readout-value" id="readoutEarned">—</span>
+        </div>
+        <div class="readout-item">
+          <span class="readout-label">Effective rate</span>
+          <span class="readout-value" id="readoutRate">—</span>
+        </div>
+        <div class="readout-item">
+          <span class="readout-label">Time vs billed</span>
+          <span class="readout-value" id="readoutVariance">—</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-head"><label for="fieldNotes">Notes</label></div>
+        <textarea id="fieldNotes" class="input textarea" rows="2" placeholder="Optional — feedback received, difficulty, links"></textarea>
+      </div>
+
+      <div class="dialog-foot">
+        <button type="button" class="btn btn-ghost" id="btnCancelDialog">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="btnSubmit"><span id="btnSubmitText">Save task</span></button>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+<!-- ---------- Confirm dialog ---------- -->
+<div class="scrim" id="confirmScrim" hidden>
+  <div class="dialog dialog-sm" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="dialog-head">
+      <h2 class="dialog-title" id="confirmTitle">Are you sure?</h2>
+    </div>
+    <p class="confirm-body" id="confirmBody"></p>
+    <div class="dialog-foot">
+      <button type="button" class="btn btn-ghost" id="btnConfirmCancel">Cancel</button>
+      <button type="button" class="btn btn-danger" id="btnConfirmOk">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
