@@ -29,11 +29,11 @@
 
   const STATUSES = ['IN_PROGRESS', 'PENDING', 'ACCEPTED', 'REJECTED'];
 
-  // Muted, distinguishable on a dark ground. Reused by both charts.
+  // Green-forward categorical palette, distinguishable slice-to-slice.
   const SERIES = [
-    '#7c88d8', '#5fa47c', '#c9993f', '#c47070',
-    '#6fa0b5', '#a887c9', '#8a9a5b', '#c98a6b',
-    '#7d8794', '#b5849d'
+    '#30e089', '#22d3ee', '#a3e635', '#2dd4bf',
+    '#4ade80', '#84cc16', '#60a5fa', '#fbbf24',
+    '#34d399', '#f472b6'
   ];
 
   /* --------------------------------------------------------------- state */
@@ -220,7 +220,7 @@
       scalar: 0.8,
       ticks: 120,
       origin: { y: 0.72 },
-      colors: ['#5fa47c', '#7c88d8', '#c9993f', '#e8eaee']
+      colors: ['#30e089', '#a3e635', '#22d3ee', '#fbbf24', '#4ade80']
     });
   }
 
@@ -742,7 +742,7 @@
 
     $('sparkTotal').innerHTML      = sparkSvg(earnedSeries, 'var(--accent)');
     $('sparkAcceptance').innerHTML = sparkSvg(acceptSeries, 'var(--accepted)');
-    $('sparkHours').innerHTML      = sparkSvg(hoursSeries, '#6fa0b5');
+    $('sparkHours').innerHTML      = sparkSvg(hoursSeries, 'var(--cyan)');
     $('sparkEffRate').innerHTML    = sparkSvg(rateSeries, 'var(--pending)');
   }
 
@@ -817,7 +817,7 @@
         scales: {
           x: {
             beginAtZero: true,
-            grid: { color: '#1b1f26', drawTicks: false },
+            grid: { color: 'rgba(228,242,234,.07)', drawTicks: false },
             border: { display: false },
             ticks: { padding: 6, maxTicksLimit: 5, callback: (v) => fx().symbol + v }
           },
@@ -984,18 +984,18 @@
     if (typeof Chart === 'undefined') return;
     Chart.defaults.font.family = "'Poppins', sans-serif";
     Chart.defaults.font.size = 11;
-    Chart.defaults.color = '#6b7280';
-    Chart.defaults.borderColor = '#21252d';
+    Chart.defaults.color = '#93ac9f';
+    Chart.defaults.borderColor = 'rgba(228,242,234,.07)';
     Chart.defaults.animation.duration = 380;
   }
 
   const tooltipStyle = {
-    backgroundColor: '#1c2028',
-    borderColor: '#2c313b',
+    backgroundColor: '#101b16',
+    borderColor: '#274036',
     borderWidth: 1,
-    titleColor: '#e8eaee',
+    titleColor: '#e4f2ea',
     titleFont: { family: "'Poppins', sans-serif", size: 11.5, weight: '500' },
-    bodyColor: '#9ba1ad',
+    bodyColor: '#a8c2b4',
     bodyFont: { family: "'Poppins', sans-serif", size: 11.5 },
     padding: 10,
     cornerRadius: 7,
@@ -1032,8 +1032,8 @@
 
     const ctx = canvas.getContext('2d');
     const fill = ctx.createLinearGradient(0, 0, 0, 240);
-    fill.addColorStop(0, 'rgba(124,136,216,.22)');
-    fill.addColorStop(1, 'rgba(124,136,216,0)');
+    fill.addColorStop(0, 'rgba(48,224,137,.20)');
+    fill.addColorStop(1, 'rgba(48,224,137,0)');
 
     timelineChart = new Chart(ctx, {
       data: {
@@ -1044,15 +1044,15 @@
             label: 'Earned',
             data: perDay,
             yAxisID: 'y',
-            borderColor: '#7c88d8',
+            borderColor: '#30e089',
             backgroundColor: fill,
             borderWidth: 2,
             fill: true,
             tension: 0.32,
             pointRadius: 0,
             pointHoverRadius: 4,
-            pointHoverBackgroundColor: '#7c88d8',
-            pointHoverBorderColor: '#101216',
+            pointHoverBackgroundColor: '#30e089',
+            pointHoverBorderColor: '#0c1411',
             pointHoverBorderWidth: 2
           },
           {
@@ -1060,7 +1060,7 @@
             label: 'Hours worked',
             data: worked,
             yAxisID: 'y1',
-            borderColor: '#4d5460',
+            borderColor: '#557163',
             borderWidth: 1.5,
             borderDash: [3, 3],
             fill: false,
@@ -1081,7 +1081,7 @@
             align: 'end',
             labels: {
               boxWidth: 7, boxHeight: 7, usePointStyle: true, pointStyle: 'circle',
-              padding: 14, color: '#6b7280', font: { size: 11 }
+              padding: 14, color: '#93ac9f', font: { size: 11 }
             }
           },
           tooltip: {
@@ -1101,7 +1101,7 @@
           },
           y: {
             beginAtZero: true,
-            grid: { color: '#1b1f26', drawTicks: false },
+            grid: { color: 'rgba(228,242,234,.07)', drawTicks: false },
             border: { display: false },
             ticks: { padding: 8, maxTicksLimit: 5, callback: (v) => fx().symbol + v }
           },
@@ -1129,13 +1129,13 @@
       ctx.save();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#e8eaee';
+      ctx.fillStyle = '#e4f2ea';
       ctx.font = "600 16px 'Poppins', sans-serif";
       ctx.fillText(
         chartMetric === 'amount' ? fx().symbol + Math.round(total).toLocaleString('en-US') : String(total),
         x, y - 7
       );
-      ctx.fillStyle = '#6b7280';
+      ctx.fillStyle = '#6e8a7a';
       ctx.font = "400 10px 'Poppins', sans-serif";
       ctx.fillText(chartMetric === 'amount' ? 'total' : 'tasks', x, y + 10);
       ctx.restore();
@@ -1183,7 +1183,7 @@
         datasets: [{
           data: entries.map(([, v]) => Math.round(v * 100) / 100),
           backgroundColor: SERIES,
-          borderColor: '#101216',
+          borderColor: '#0c1411',
           borderWidth: 2,
           hoverOffset: 5
         }]
