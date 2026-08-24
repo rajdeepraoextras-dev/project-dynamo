@@ -247,13 +247,13 @@ table { border-collapse: collapse; width: 100%; }
 .btn i { width: 16px; height: 16px; }
 
 .btn-primary {
-  background: linear-gradient(135deg, #45efa0, #17ce80);
+  background: var(--accent);
   color: #04120b;
   font-weight: 600;
   padding: 0 17px;
   box-shadow: 0 6px 18px rgba(23,206,128,.30);
 }
-.btn-primary:hover { box-shadow: 0 8px 22px rgba(23,206,128,.45); transform: translateY(-1px); }
+.btn-primary:hover { background: #45efa0; box-shadow: 0 8px 22px rgba(23,206,128,.45); transform: translateY(-1px); }
 .btn-primary:active { transform: translateY(0); }
 
 .btn-ghost { background: transparent; color: var(--text-2); border-color: var(--line-strong); }
