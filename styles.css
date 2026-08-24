@@ -166,7 +166,6 @@ table { border-collapse: collapse; width: 100%; }
   border-radius: 9px;
   color: #04120b;
   background: var(--accent);
-  box-shadow: 0 0 0 1px rgba(48,224,137,.40), 0 8px 18px rgba(23,206,128,.30);
 }
 .brand-mark i { width: 18px; height: 18px; }
 
@@ -251,10 +250,9 @@ table { border-collapse: collapse; width: 100%; }
   color: #04120b;
   font-weight: 600;
   padding: 0 17px;
-  box-shadow: 0 6px 18px rgba(23,206,128,.30);
 }
-.btn-primary:hover { background: #45efa0; box-shadow: 0 8px 22px rgba(23,206,128,.45); transform: translateY(-1px); }
-.btn-primary:active { transform: translateY(0); }
+.btn-primary:hover { background: #45efa0; }
+.btn-primary:active { background: #17ce80; }
 
 .btn-ghost { background: transparent; color: var(--text-2); border-color: var(--line-strong); }
 .btn-ghost:hover { background: var(--surface-2); color: var(--text); border-color: #35543f; }
