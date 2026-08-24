@@ -165,7 +165,7 @@ table { border-collapse: collapse; width: 100%; }
   flex-shrink: 0;
   border-radius: 9px;
   color: #04120b;
-  background: linear-gradient(150deg, #45efa0, #17ce80 60%, #22d3ee 130%);
+  background: var(--accent);
   box-shadow: 0 0 0 1px rgba(48,224,137,.40), 0 8px 18px rgba(23,206,128,.30);
 }
 .brand-mark i { width: 18px; height: 18px; }
