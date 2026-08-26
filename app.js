@@ -29,6 +29,16 @@
 
   const STATUSES = ['IN_PROGRESS', 'PENDING', 'ACCEPTED', 'REJECTED'];
 
+  // Date-range presets for the global filter bar. 'custom' reads scope.from/to.
+  const RANGES = {
+    '7':      { label: 'Last 7 days' },
+    '30':     { label: 'Last 30 days' },
+    '90':     { label: 'Last 90 days' },
+    'month':  { label: 'This month' },
+    'all':    { label: 'All time' },
+    'custom': { label: 'Custom range' }
+  };
+
   // Green-forward categorical palette, distinguishable slice-to-slice.
   const SERIES = [
     '#30e089', '#22d3ee', '#a3e635', '#2dd4bf',
@@ -41,11 +51,18 @@
   let tasks = [];
   let settings = { currency: 'USD', sound: true, view: 'table' };
 
-  const filters = {
-    search: '', status: 'ALL', category: 'ALL', platform: 'ALL', sort: 'date-desc'
+  /* The global filter. Every card, chart and row on the page reads this slice,
+     so one control set answers one question across the whole dashboard. */
+  const scope = {
+    range: 'all', from: '', to: '',
+    status: 'ALL', category: 'ALL', subCategory: 'ALL', platform: 'ALL'
   };
 
-  let chartRange  = '7';
+  /* Log-only controls — they narrow the table, not the metrics above it. */
+  let search = '';
+  let sortBy = 'date-desc';
+
+  let collapsed = [];        // metric group ids the user has folded away
   let chartMetric = 'amount';
 
   let timelineChart = null;
@@ -266,13 +283,24 @@
   function loadSettings() {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
-      if (raw) Object.assign(settings, JSON.parse(raw));
+      if (raw) {
+        const parsed = JSON.parse(raw) || {};
+        if (parsed.scope) Object.assign(scope, parsed.scope);
+        if (Array.isArray(parsed.collapsed)) collapsed = parsed.collapsed.slice();
+        if (typeof parsed.sort === 'string') sortBy = parsed.sort;
+        delete parsed.scope; delete parsed.collapsed; delete parsed.sort;
+        Object.assign(settings, parsed);
+      }
       if (!FX[settings.currency]) settings.currency = 'USD';
+      if (!RANGES[scope.range]) scope.range = 'all';
     } catch (err) { /* fall back to defaults */ }
   }
 
   function saveSettings() {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (err) { /* quota */ }
+    try {
+      localStorage.setItem(SETTINGS_KEY,
+        JSON.stringify({ ...settings, scope, collapsed, sort: sortBy }));
+    } catch (err) { /* quota */ }
   }
 
   function readCache() {
@@ -464,18 +492,65 @@
 
   /* ------------------------------------------------------------ selectors */
 
-  function visibleTasks() {
-    let out = tasks.slice();
+  /** Inclusive ISO bounds for the active range preset. Blank = open ended. */
+  function rangeBounds() {
+    const today = todayISO();
+    switch (scope.range) {
+      case '7':     return { from: shiftISO(today, -6),  to: today };
+      case '30':    return { from: shiftISO(today, -29), to: today };
+      case '90':    return { from: shiftISO(today, -89), to: today };
+      case 'month': return { from: today.slice(0, 8) + '01', to: today };
+      case 'custom': {
+        let { from, to } = scope;
+        if (from && to && from > to) [from, to] = [to, from];
+        return { from: from || '', to: to || '' };
+      }
+      default: return { from: '', to: '' };
+    }
+  }
 
-    const q = filters.search.trim().toLowerCase();
+  /** Human label for the active range — used by the chips and the chart flag. */
+  function rangeLabel() {
+    if (scope.range !== 'custom') return (RANGES[scope.range] || RANGES.all).label;
+    const { from, to } = rangeBounds();
+    if (from && to) return `${shortDate(from)} – ${shortDate(to)}`;
+    if (from) return `From ${shortDate(from)}`;
+    if (to)   return `Up to ${shortDate(to)}`;
+    return 'All time';
+  }
+
+  function activeFilterCount() {
+    return ['status', 'category', 'subCategory', 'platform'].filter((k) => scope[k] !== 'ALL').length
+      + (scope.range !== 'all' ? 1 : 0);
+  }
+
+  /**
+   * The slice every card, chart and row on the page reads from. One filter set
+   * drives the whole dashboard, so the numbers always answer one question.
+   */
+  function scopedTasks() {
+    const { from, to } = rangeBounds();
+    return tasks.filter((t) => {
+      if (from && (!t.date || t.date < from)) return false;
+      if (to   && (!t.date || t.date > to))   return false;
+      if (scope.status      !== 'ALL' && t.status      !== scope.status)      return false;
+      if (scope.category    !== 'ALL' && t.category    !== scope.category)    return false;
+      if (scope.subCategory !== 'ALL' && t.subCategory !== scope.subCategory) return false;
+      if (scope.platform    !== 'ALL' && t.platform    !== scope.platform)    return false;
+      return true;
+    });
+  }
+
+  /** The scoped slice narrowed by the log's own search box, then sorted. */
+  function visibleTasks() {
+    let out = scopedTasks();
+
+    const q = search.trim().toLowerCase();
     if (q) {
       out = out.filter((t) =>
         [t.ref, t.category, t.subCategory, t.platform, t.notes, t.repoUrl]
           .some((v) => v && String(v).toLowerCase().includes(q)));
     }
-    if (filters.status   !== 'ALL') out = out.filter((t) => t.status === filters.status);
-    if (filters.category !== 'ALL') out = out.filter((t) => t.category === filters.category);
-    if (filters.platform !== 'ALL') out = out.filter((t) => t.platform === filters.platform);
 
     const byDate = (a, b) => (a.date || '').localeCompare(b.date || '');
     const sorters = {
@@ -487,7 +562,7 @@
       'paidHours-desc': (a, b) => b.paidHours - a.paidHours,
       'timeSpent-desc': (a, b) => b.timeSpent - a.timeSpent
     };
-    return out.sort(sorters[filters.sort] || sorters['date-desc']);
+    return out.sort(sorters[sortBy] || sorters['date-desc']);
   }
 
   function totals(list) {
@@ -531,55 +606,54 @@
   /* ------------------------------------------------------- extra metrics */
 
   /** Sum of earned() for logged tasks whose date falls within [startISO, endISO]. */
-  function sumEarnedInRange(startISO, endISO) {
-    return tasks.reduce((s, t) => {
+  function sumEarnedInRange(list, startISO, endISO) {
+    return list.reduce((s, t) => {
       if (!isLogged(t) || !t.date) return s;
       if (t.date < startISO || t.date > endISO) return s;
       return s + earned(t);
     }, 0);
   }
 
-  /** Rolling 7-day window vs the 7 days before it — same convention as the timeline's "7 days" toggle. */
-  function weeklyTrend() {
+  /** Rolling 7-day window vs the 7 days before it. */
+  function weeklyTrend(list) {
     const today = todayISO();
     const thisStart = shiftISO(today, -6);
     const lastEnd   = shiftISO(thisStart, -1);
     const lastStart = shiftISO(lastEnd, -6);
     return {
-      thisWeek: sumEarnedInRange(thisStart, today),
-      lastWeek: sumEarnedInRange(lastStart, lastEnd)
+      thisWeek: sumEarnedInRange(list, thisStart, today),
+      lastWeek: sumEarnedInRange(list, lastStart, lastEnd)
     };
   }
 
   /** Current and best consecutive-day streaks of having at least one logged task. */
-  function computeStreaks() {
-    const dates = new Set(tasks.filter(isLogged).map((t) => t.date).filter(Boolean));
-    if (!dates.size) return { current: 0, best: 0 };
+  function computeStreaks(list) {
+    const dates = new Set(list.filter(isLogged).map((t) => t.date).filter(Boolean));
 
     let current = 0;
     let cursor = todayISO();
-    if (!dates.has(cursor)) cursor = shiftISO(cursor, -1); // grace: today isn't over yet
+    if (!dates.has(cursor)) cursor = shiftISO(cursor, -1);
     while (dates.has(cursor)) { current++; cursor = shiftISO(cursor, -1); }
 
     const sorted = Array.from(dates).sort();
     let best = 0, run = 0, prev = null;
     sorted.forEach((d) => {
-      run = (prev && shiftISO(prev, 1) === d) ? run + 1 : 1;
+      run = prev && shiftISO(prev, 1) === d ? run + 1 : 1;
       best = Math.max(best, run);
       prev = d;
     });
     return { current, best };
   }
 
-  /** Platform with the highest realised earnings, and its share of the total. */
-  function topPlatform() {
+  /** Highest-earning value of a field, plus its share of realised earnings. */
+  function topBucket(list, key) {
     const buckets = {};
     let total = 0;
-    tasks.forEach((t) => {
+    list.forEach((t) => {
       if (!isLogged(t)) return;
       const v = earned(t);
-      const key = t.platform || 'General';
-      buckets[key] = (buckets[key] || 0) + v;
+      const name = t[key] || 'General';
+      buckets[name] = (buckets[name] || 0) + v;
       total += v;
     });
     const ranked = Object.entries(buckets).sort((a, b) => b[1] - a[1]);
@@ -588,165 +662,434 @@
     return { name, value, share: total ? (value / total) * 100 : 0 };
   }
 
+  /**
+   * The day window the charts and sparklines draw. Follows the active range
+   * when it is bounded, otherwise falls back to the span the data covers.
+   */
+  function chartDays(maxSpan, list) {
+    const { from, to } = rangeBounds();
+    const dates = (list || []).map((t) => t.date).filter(Boolean).sort();
+    const end   = to   || (dates.length ? dates[dates.length - 1] : todayISO());
+    const start = from || (dates.length ? dates[0] : end);
+
+    const raw = Math.round((new Date(end + 'T00:00:00') - new Date(start + 'T00:00:00')) / 86400000) + 1;
+    const span = Math.max(1, Math.min(maxSpan, raw));
+    return Array.from({ length: span }, (_, i) => shiftISO(end, -(span - 1 - i)));
+  }
+
   /** Minimal inline sparkline — an area + line path, styled by CSS custom property. */
   function sparkSvg(values, colorVar) {
-    if (!values.length || !values.some((v) => Math.abs(v) > 0.0001)) return '';
-    const w = 100, h = 26;
+    if (values.length < 2 || !values.some((v) => Math.abs(v) > 0.0001)) return '';
+    const w = 100, h = 40;
     const max = Math.max(...values, 0);
     const min = Math.min(...values, 0);
     const range = (max - min) || 1;
-    const stepX = values.length > 1 ? w / (values.length - 1) : 0;
+    const stepX = w / (values.length - 1);
     const pts = values.map((v, i) => `${(i * stepX).toFixed(1)},${(h - ((v - min) / range) * h).toFixed(1)}`);
     const line = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p).join(' ');
     const area = `${line} L${w},${h} L0,${h} Z`;
     return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="spark-svg">
       <path d="${area}" stroke="none" style="fill:${colorVar};opacity:.14"/>
-      <path d="${line}" fill="none" style="stroke:${colorVar}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${line}" fill="none" style="stroke:${colorVar}" stroke-width="1.6"
+        vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>`;
   }
 
-  /* -------------------------------------------------------------- render */
+  /* --------------------------------------------------------- metric board */
 
-  function renderSummary() {
-    const t = totals(tasks);
+  /**
+   * One card, one number. The board is described here and built once, so a new
+   * metric means one entry in this list plus one line in metricValues().
+   */
+  const METRIC_GROUPS = [
+    {
+      id: 'earnings',
+      title: 'Earnings',
+      sub: 'What the filtered work has paid',
+      metrics: [
+        { id: 'total',           label: 'Total earned',     icon: 'wallet',         tone: 'accent',   lead: true, spark: 'earned' },
+        { id: 'approved',        label: 'Approved',         icon: 'circle-check',   tone: 'accepted' },
+        { id: 'inReviewAmount',  label: 'In review',        icon: 'hourglass',      tone: 'pending' },
+        { id: 'incentiveWon',    label: 'Incentive earned', icon: 'gift',           tone: 'lime' },
+        { id: 'incentiveLocked', label: 'Locked incentive', icon: 'lock',           tone: 'pending' },
+        { id: 'pipeline',        label: 'In pipeline',      icon: 'git-branch',     tone: 'cool' },
+        { id: 'thisWeek',        label: 'This week',        icon: 'calendar-days',  tone: 'accent' },
+        { id: 'lastWeek',        label: 'Last week',        icon: 'calendar-range', tone: 'cool' },
+        { id: 'avgTask',         label: 'Avg per task',     icon: 'layers',         tone: 'accepted' }
+      ]
+    },
+    {
+      id: 'delivery',
+      title: 'Delivery',
+      sub: 'How the work is being received',
+      metrics: [
+        { id: 'acceptance',  label: 'Acceptance rate', icon: 'badge-check',  tone: 'accepted', lead: true, meter: true },
+        { id: 'accepted',    label: 'Accepted',        icon: 'circle-check', tone: 'accepted' },
+        { id: 'inReview',    label: 'In review',       icon: 'clock-3',      tone: 'pending' },
+        { id: 'rejected',    label: 'Rejected',        icon: 'circle-x',     tone: 'rejected' },
+        { id: 'inProgress',  label: 'In progress',     icon: 'loader',       tone: 'cool' },
+        { id: 'logged',      label: 'Logged tasks',    icon: 'list-checks',  tone: 'accent' },
+        { id: 'inView',      label: 'Tasks in view',   icon: 'filter',       tone: 'lime' },
+        { id: 'streak',      label: 'Current streak',  icon: 'flame',        tone: 'warm' },
+        { id: 'bestStreak',  label: 'Best streak',     icon: 'trophy',       tone: 'warm' }
+      ]
+    },
+    {
+      id: 'time',
+      title: 'Time & rate',
+      sub: 'Where the hours actually go',
+      metrics: [
+        { id: 'effRate',     label: 'Effective rate',   icon: 'gauge',     tone: 'warm', lead: true, spark: 'rate' },
+        { id: 'billedRate',  label: 'Billed rate',      icon: 'receipt',   tone: 'accent' },
+        { id: 'hoursBilled', label: 'Hours billed',     icon: 'clock-3',   tone: 'cool' },
+        { id: 'hoursWorked', label: 'Hours worked',     icon: 'timer',     tone: 'cool' },
+        { id: 'variance',    label: 'Time variance',    icon: 'scale',     tone: 'accent' },
+        { id: 'avgHours',    label: 'Avg hours / task', icon: 'hourglass', tone: 'cool' },
+        { id: 'utilisation', label: 'Time used',        icon: 'zap',       tone: 'lime' },
+        { id: 'topPlatform', label: 'Top platform',     icon: 'server',    tone: 'cool',   text: true },
+        { id: 'topCategory', label: 'Top category',     icon: 'shapes',    tone: 'accent', text: true }
+      ]
+    }
+  ];
+
+  const SPARK_COLOR = { earned: 'var(--accent)', rate: 'var(--pending)' };
+
+  function metricCardHtml(m) {
+    let visual = '';
+    if (m.spark) {
+      visual = `<div class="metric-visual spark" data-spark="${m.spark}"></div>`;
+    } else if (m.meter) {
+      visual = `
+        <div class="metric-visual">
+          <div class="meter" role="img" aria-label="Status breakdown">
+            <span class="meter-seg is-accepted" data-seg="accepted"></span>
+            <span class="meter-seg is-pending"  data-seg="inReview"></span>
+            <span class="meter-seg is-rejected" data-seg="rejected"></span>
+            <span class="meter-seg is-progress" data-seg="inProgress"></span>
+          </div>
+          <div class="meter-key" data-meter-key></div>
+        </div>`;
+    }
+    return `
+      <article class="metric${m.lead ? ' is-lead' : ''}" data-metric="${m.id}" data-tone="${m.tone}">
+        <div class="metric-head">
+          <p class="metric-label">${escapeHtml(m.label)}</p>
+          <span class="metric-icon" aria-hidden="true"><i data-lucide="${m.icon}"></i></span>
+        </div>
+        <p class="metric-value${m.text ? ' is-text' : ''}" data-value>—</p>
+        <p class="metric-note" data-note></p>
+        ${visual}
+      </article>`;
+  }
+
+  /** Paints the board skeleton once; renderMetrics() only writes values into it. */
+  function buildMetricBoard() {
+    $('metricBoard').innerHTML = METRIC_GROUPS.map((g) => `
+      <section class="metric-group${collapsed.includes(g.id) ? ' is-collapsed' : ''}" data-group="${g.id}">
+        <div class="metric-group-head">
+          <button type="button" class="metric-group-toggle" data-toggle-group="${g.id}"
+            title="Show or hide this group" aria-label="Toggle ${escapeHtml(g.title)}">
+            <i data-lucide="chevron-down"></i>
+          </button>
+          <h2 class="metric-group-title">${escapeHtml(g.title)}</h2>
+          <p class="metric-group-sub">${escapeHtml(g.sub)}</p>
+          <span class="metric-group-rule" aria-hidden="true"></span>
+        </div>
+        <div class="metric-grid">${g.metrics.map(metricCardHtml).join('')}</div>
+      </section>`).join('');
+  }
+
+  /* ------------------------------------------------------- metric values */
+
+  /** Currency value with the symbol set a size down, so the digits lead. */
+  function moneyHtml(usd) {
+    const v = toDisplay(usd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `<span class="metric-sym">${escapeHtml(fx().symbol)}</span>${v}`;
+  }
+
+  const unit = (text) => `<span class="metric-unit">${escapeHtml(text)}</span>`;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  function metricValues(scoped) {
+    const t = totals(scoped);
+    const pct = (n) => (t.count ? Math.round((n / t.count) * 100) : 0);
+
+    const acceptance  = t.reviewed ? (t.accepted / t.reviewed) * 100 : 0;
+    const variance    = t.paidHours - t.actualHours;
+    const effective   = t.actualHours > 0 ? t.amount / t.actualHours : 0;
+    const billedRate  = t.paidHours   > 0 ? t.amount / t.paidHours   : 0;
+    const utilisation = t.paidHours   > 0 ? (t.actualHours / t.paidHours) * 100 : 0;
+    const avgHours    = t.reviewed ? t.paidHours / t.reviewed : 0;
+
+    const { thisWeek, lastWeek } = weeklyTrend(scoped);
+    const streaks = computeStreaks(scoped);
+    const plat = topBucket(scoped, 'platform');
+    const cat  = topBucket(scoped, 'category');
+
+    let weekNote;
+    if (!thisWeek && !lastWeek) weekNote = 'Nothing logged in the last 7 days';
+    else if (!lastWeek) weekNote = '<span class="trend-up">New this week</span>';
+    else {
+      const delta = ((thisWeek - lastWeek) / lastWeek) * 100;
+      const up = delta >= 0;
+      weekNote = `<span class="${up ? 'trend-up' : 'trend-down'}">${up ? '▲' : '▼'} ${Math.abs(delta).toFixed(0)}%</span> vs last week`;
+    }
+
+    const varianceTone = variance >= 0 ? 'text-accepted' : 'text-rejected';
+
+    return {
+      /* --- earnings --- */
+      total: {
+        value: moneyHtml(t.amount),
+        note: t.reviewed
+          ? `Realised across ${plural(t.reviewed, 'logged task')}`
+          : 'Nothing logged in this view yet'
+      },
+      approved: {
+        value: moneyHtml(t.approved),
+        note: t.accepted ? `${plural(t.accepted, 'task')} accepted` : 'No accepted tasks yet'
+      },
+      inReviewAmount: {
+        value: moneyHtml(t.pending),
+        note: t.inReview ? `${plural(t.inReview, 'task')} awaiting a verdict` : 'Nothing awaiting review'
+      },
+      incentiveWon: {
+        value: moneyHtml(t.incentiveWon),
+        note: 'Bonus already banked on accepted work'
+      },
+      incentiveLocked: {
+        value: moneyHtml(t.incentiveLocked),
+        note: 'Unlocks only if those tasks are accepted'
+      },
+      pipeline: {
+        value: moneyHtml(t.pipelineAmount),
+        note: t.inProgress
+          ? `${plural(t.inProgress, 'task')} in progress · ${t.pipelineHours.toFixed(1)}h to bill`
+          : 'No work in progress'
+      },
+      thisWeek: { value: moneyHtml(thisWeek), note: weekNote },
+      lastWeek: { value: moneyHtml(lastWeek), note: 'The 7 days before this one' },
+      avgTask: {
+        value: moneyHtml(t.reviewed ? t.amount / t.reviewed : 0),
+        note: t.reviewed ? `Mean of ${plural(t.reviewed, 'logged task')}` : 'No tasks yet'
+      },
+
+      /* --- delivery --- */
+      acceptance: {
+        value: `${acceptance.toFixed(acceptance % 1 === 0 ? 0 : 1)}${unit('%')}`,
+        note: t.reviewed
+          ? `${t.accepted} accepted of ${plural(t.reviewed, 'reviewed task')}`
+          : 'Nothing has been reviewed yet'
+      },
+      accepted:   { value: String(t.accepted),   note: `${pct(t.accepted)}% of tasks in view` },
+      inReview:   { value: String(t.inReview),   note: `${pct(t.inReview)}% of tasks in view` },
+      rejected:   { value: String(t.rejected),   note: `${pct(t.rejected)}% of tasks in view` },
+      inProgress: { value: String(t.inProgress), note: `${t.pipelineHours.toFixed(1)}h still to bill` },
+      logged:     { value: String(t.reviewed),   note: 'Submitted, so they count towards earnings' },
+      inView:     {
+        value: String(t.count),
+        note: tasks.length === t.count ? 'Every task you have logged' : `Filtered from ${plural(tasks.length, 'task')}`
+      },
+      streak: {
+        value: `${streaks.current}${unit(streaks.current === 1 ? 'day' : 'days')}`,
+        note: 'Consecutive days with logged work'
+      },
+      bestStreak: {
+        value: `${streaks.best}${unit(streaks.best === 1 ? 'day' : 'days')}`,
+        note: 'Longest run in this view'
+      },
+
+      /* --- time & rate --- */
+      effRate: {
+        value: `${moneyHtml(effective)}${unit('/hr')}`,
+        note: t.actualHours > 0
+          ? `Over ${t.actualHours.toFixed(1)}h actually worked`
+          : 'Log time spent to see a real rate'
+      },
+      billedRate: {
+        value: `${moneyHtml(billedRate)}${unit('/hr')}`,
+        note: t.paidHours > 0 ? `Over ${t.paidHours.toFixed(1)}h billed` : 'No billed hours yet'
+      },
+      hoursBilled: { value: `${t.paidHours.toFixed(1)}${unit('h')}`,   note: 'Hours submitted for payment' },
+      hoursWorked: { value: `${t.actualHours.toFixed(1)}${unit('h')}`, note: 'Hours you actually spent' },
+      variance: {
+        value: `<span class="${t.count ? varianceTone : ''}">${variance >= 0 ? '+' : '−'}${Math.abs(variance).toFixed(1)}</span>${unit('h')}`,
+        note: !t.count ? 'No tasks in view'
+          : variance >= 0 ? 'Ahead — billed more than you worked' : 'Over — worked more than you billed'
+      },
+      avgHours: {
+        value: `${avgHours.toFixed(2)}${unit('h')}`,
+        note: t.reviewed ? 'Billed per logged task' : 'No tasks yet'
+      },
+      utilisation: {
+        value: `${utilisation.toFixed(0)}${unit('%')}`,
+        note: t.paidHours > 0 ? 'Of billed hours actually spent' : 'No billed hours yet'
+      },
+      topPlatform: {
+        value: plat ? escapeHtml(plat.name) : '—',
+        title: plat ? plat.name : '',
+        note: plat ? `${money(plat.value)} · ${Math.round(plat.share)}% of earnings` : 'No data yet'
+      },
+      topCategory: {
+        value: cat ? escapeHtml(cat.name) : '—',
+        title: cat ? cat.name : '',
+        note: cat ? `${money(cat.value)} · ${Math.round(cat.share)}% of earnings` : 'No data yet'
+      },
+
+      /* --- consumed by the meter, not a card of its own --- */
+      _meter: t
+    };
+  }
+
+  function renderMeter(t) {
+    const board = $('metricBoard');
+    const pct = (n) => (t.count ? (n / t.count) * 100 : 0);
+    board.querySelectorAll('[data-seg]').forEach((seg) => {
+      seg.style.width = pct(t[seg.dataset.seg]) + '%';
+    });
+
+    const key = board.querySelector('[data-meter-key]');
+    if (!key) return;
+    const parts = [
+      ['accepted', 'is-accepted', 'Accepted'],
+      ['inReview', 'is-pending',  'In review'],
+      ['rejected', 'is-rejected', 'Rejected'],
+      ['inProgress', 'is-progress', 'In progress']
+    ].filter(([field]) => t[field] > 0);
+
+    key.innerHTML = parts.length
+      ? parts.map(([field, cls, label]) =>
+          `<span><i class="${cls}"></i>${label} ${t[field]}</span>`).join('')
+      : '<span>No tasks in this view</span>';
+  }
+
+  function renderSparks(scoped) {
+    const days = chartDays(90, scoped);
+    const perDay = days.map((d) => scoped.filter((t) => t.date === d && isLogged(t)));
+
+    const series = {
+      earned: perDay.map((list) => toDisplay(list.reduce((s, t) => s + earned(t), 0))),
+      rate: perDay.map((list) => {
+        const hrs = list.reduce((s, t) => s + t.timeSpent, 0);
+        const amt = list.reduce((s, t) => s + earned(t), 0);
+        return hrs > 0 ? toDisplay(amt / hrs) : 0;
+      })
+    };
+
+    $('metricBoard').querySelectorAll('[data-spark]').forEach((node) => {
+      const key = node.dataset.spark;
+      node.innerHTML = sparkSvg(series[key] || [], SPARK_COLOR[key] || 'var(--accent)');
+    });
+  }
+
+  function renderMetrics(scoped) {
     const symbol = fx().symbol;
-
     document.querySelectorAll('.cur-sym').forEach((n) => { n.textContent = symbol; });
     $('dialogCurrency').textContent = settings.currency;
     $('footFx').textContent = settings.currency === 'USD'
       ? 'Amounts stored in USD'
       : `Stored in USD · shown in ${settings.currency} at ${fx().rate}`;
 
-    $('statTotal').textContent    = money(t.amount, false);
-    $('statApproved').textContent = money(t.approved);
-    $('statPending').textContent  = money(t.pending);
+    const values = metricValues(scoped);
 
-    const incentiveNote = $('statIncentive');
-    if (t.incentiveWon || t.incentiveLocked) {
-      incentiveNote.hidden = false;
-      const parts = [];
-      if (t.incentiveWon) {
-        parts.push(`<span class="text-accepted">+${escapeHtml(money(t.incentiveWon))}</span> incentive earned`);
-      }
-      if (t.incentiveLocked) {
-        parts.push(`${escapeHtml(money(t.incentiveLocked))} locked until accepted`);
-      }
-      incentiveNote.innerHTML = parts.join(' <span class="sep">·</span> ');
-    } else {
-      incentiveNote.hidden = true;
-    }
-
-    // Rate is over reviewed work only — in-progress tasks have not been judged.
-    const rate = t.reviewed ? (t.accepted / t.reviewed) * 100 : 0;
-    $('statAcceptance').textContent = rate.toFixed(rate % 1 === 0 ? 0 : 1);
-
-    const counts = [];
-    if (t.accepted)   counts.push(`${t.accepted} accepted`);
-    if (t.inReview)   counts.push(`${t.inReview} in review`);
-    if (t.rejected)   counts.push(`${t.rejected} rejected`);
-    if (t.inProgress) counts.push(`${t.inProgress} in progress`);
-    $('statCounts').textContent = counts.length ? counts.join(' · ') : 'No tasks yet';
-
-    const pct = (n) => (t.count ? (n / t.count) * 100 : 0);
-    $('meterAccepted').style.width = pct(t.accepted) + '%';
-    $('meterPending').style.width  = pct(t.inReview) + '%';
-    $('meterRejected').style.width = pct(t.rejected) + '%';
-    $('meterProgress').style.width = pct(t.inProgress) + '%';
-
-    const pipeline = $('statPipeline');
-    if (t.inProgress) {
-      pipeline.hidden = false;
-      pipeline.innerHTML =
-        `<span class="text-progress">${escapeHtml(money(t.pipelineAmount))}</span> in the pipeline` +
-        ` <span class="sep">·</span> ${t.inProgress} task${t.inProgress === 1 ? '' : 's'}` +
-        `, ${t.pipelineHours.toFixed(1)}h to bill`;
-    } else {
-      pipeline.hidden = true;
-    }
-
-    $('statPaidHours').textContent   = t.paidHours.toFixed(1);
-    $('statActualHours').textContent = t.actualHours.toFixed(1) + 'h';
-
-    const variance = t.paidHours - t.actualHours;
-    const varianceEl = $('statVariance');
-    if (!t.count) {
-      varianceEl.textContent = '—';
-      varianceEl.className = '';
-    } else {
-      varianceEl.textContent = variance >= 0
-        ? `${variance.toFixed(1)}h ahead`
-        : `${Math.abs(variance).toFixed(1)}h over`;
-      varianceEl.className = variance >= 0 ? 'text-accepted' : 'text-rejected';
-    }
-
-    const effective = t.actualHours > 0 ? t.amount / t.actualHours : 0;
-    const billed    = t.paidHours   > 0 ? t.amount / t.paidHours   : 0;
-    $('statEffRate').textContent   = money(effective, false);
-    $('statBilledRate').textContent = money(billed) + '/hr';
-  }
-
-  function renderKpis() {
-    const t = totals(tasks);
-
-    const { thisWeek, lastWeek } = weeklyTrend();
-    $('kpiWeekAmount').textContent = money(thisWeek, false);
-    const trendEl = $('kpiWeekTrend');
-    if (!thisWeek && !lastWeek) {
-      trendEl.textContent = 'No data yet';
-    } else if (!lastWeek) {
-      trendEl.innerHTML = '<span class="trend-up">New this week</span>';
-    } else {
-      const delta = ((thisWeek - lastWeek) / lastWeek) * 100;
-      const up = delta >= 0;
-      trendEl.innerHTML = `<span class="${up ? 'trend-up' : 'trend-down'}">${up ? '▲' : '▼'} ${Math.abs(delta).toFixed(0)}%</span> vs last week`;
-    }
-
-    const { current, best } = computeStreaks();
-    $('kpiStreak').textContent = current;
-    $('kpiStreakBest').textContent = best ? `Best ${best} day${best === 1 ? '' : 's'}` : 'Best — days';
-
-    $('kpiAvgTask').textContent = t.reviewed ? money(t.amount / t.reviewed, false) : '0.00';
-    $('kpiAvgTaskCount').textContent = t.reviewed
-      ? `Across ${t.reviewed} logged task${t.reviewed === 1 ? '' : 's'}`
-      : 'No tasks yet';
-
-    const top = topPlatform();
-    const topName = $('kpiTopPlatform');
-    if (top) {
-      topName.textContent = top.name;
-      topName.title = top.name;
-      $('kpiTopPlatformShare').textContent = `${money(top.value)} · ${Math.round(top.share)}% of earnings`;
-    } else {
-      topName.textContent = '—';
-      topName.title = '';
-      $('kpiTopPlatformShare').textContent = 'No data yet';
-    }
-  }
-
-  function renderSparklines() {
-    const N = 14;
-    const days = Array.from({ length: N }, (_, i) => shiftISO(todayISO(), -(N - 1 - i)));
-    const dayTasks = days.map((d) => tasks.filter((t) => t.date === d && isLogged(t)));
-
-    const earnedSeries = dayTasks.map((list) => toDisplay(list.reduce((s, t) => s + earned(t), 0)));
-    const acceptSeries = dayTasks.map((list) => {
-      const accepted = list.filter((t) => t.status === 'ACCEPTED').length;
-      return list.length ? (accepted / list.length) * 100 : 0;
-    });
-    const hoursSeries = dayTasks.map((list) => list.reduce((s, t) => s + t.paidHours, 0));
-    const rateSeries = dayTasks.map((list) => {
-      const hrs = list.reduce((s, t) => s + t.timeSpent, 0);
-      const amt = list.reduce((s, t) => s + earned(t), 0);
-      return hrs > 0 ? toDisplay(amt / hrs) : 0;
+    $('metricBoard').querySelectorAll('[data-metric]').forEach((card) => {
+      const v = values[card.dataset.metric];
+      if (!v) return;
+      const valueEl = card.querySelector('[data-value]');
+      valueEl.innerHTML = v.value;
+      if (v.title) valueEl.title = v.title; else valueEl.removeAttribute('title');
+      card.querySelector('[data-note]').innerHTML = v.note || '';
     });
 
-    $('sparkTotal').innerHTML      = sparkSvg(earnedSeries, 'var(--accent)');
-    $('sparkAcceptance').innerHTML = sparkSvg(acceptSeries, 'var(--accepted)');
-    $('sparkHours').innerHTML      = sparkSvg(hoursSeries, 'var(--cyan)');
-    $('sparkEffRate').innerHTML    = sparkSvg(rateSeries, 'var(--pending)');
+    renderMeter(values._meter);
+    renderSparks(scoped);
   }
 
-  function renderHeatmap() {
+  /* -------------------------------------------------------- filter chrome */
+
+  const SELECT_FOR = {
+    status: 'filterStatus',
+    category: 'filterCategory',
+    subCategory: 'filterSubCategory',
+    platform: 'filterPlatform'
+  };
+
+  function syncRangeUI() {
+    const host = $('rangeFilter');
+    host.querySelectorAll('[data-range]').forEach((b) => {
+      b.classList.toggle('is-active', b.dataset.range === scope.range);
+    });
+    $('customRange').hidden = scope.range !== 'custom';
+    $('rangeFrom').value = scope.from || '';
+    $('rangeTo').value   = scope.to   || '';
+  }
+
+  function syncFilterUI() {
+    Object.entries(SELECT_FOR).forEach(([key, id]) => {
+      const select = $(id);
+      if (select) select.value = scope[key];
+    });
+    syncRangeUI();
+  }
+
+  function resetFilters() {
+    scope.range = 'all';
+    scope.from = '';
+    scope.to = '';
+    scope.status = 'ALL';
+    scope.category = 'ALL';
+    scope.subCategory = 'ALL';
+    scope.platform = 'ALL';
+    search = '';
+    $('searchInput').value = '';
+    syncFilterUI();
+  }
+
+  function clearFilter(key) {
+    if (key === 'all') { resetFilters(); return; }
+    if (key === 'range') { scope.range = 'all'; scope.from = ''; scope.to = ''; syncRangeUI(); return; }
+    if (key === 'search') { search = ''; $('searchInput').value = ''; return; }
+    scope[key] = 'ALL';
+    const select = $(SELECT_FOR[key]);
+    if (select) select.value = 'ALL';
+  }
+
+  function renderFilterChips() {
+    const host = $('filterChips');
+    const chips = [];
+
+    if (scope.range !== 'all')       chips.push(['range', 'Range', rangeLabel()]);
+    if (scope.status !== 'ALL')      chips.push(['status', 'Status', STATUS_LABEL[scope.status] || scope.status]);
+    if (scope.category !== 'ALL')    chips.push(['category', 'Category', scope.category]);
+    if (scope.subCategory !== 'ALL') chips.push(['subCategory', 'Sub-category', scope.subCategory]);
+    if (scope.platform !== 'ALL')    chips.push(['platform', 'Platform', scope.platform]);
+    if (search.trim())               chips.push(['search', 'Search', search.trim()]);
+
+    host.hidden = chips.length === 0;
+    if (!chips.length) { host.innerHTML = ''; return; }
+
+    host.innerHTML = chips.map(([key, label, value]) => `
+      <span class="chip">${escapeHtml(label)} <b>${escapeHtml(value)}</b>
+        <button type="button" class="chip-x" data-clear="${key}" title="Clear this filter"
+          aria-label="Clear ${escapeHtml(label)} filter"><i data-lucide="x"></i></button>
+      </span>`).join('') +
+      (chips.length > 1 ? '<button type="button" class="chip-clear" data-clear="all">Clear all</button>' : '');
+  }
+
+  function renderScopeSummary(scoped) {
+    const n = activeFilterCount();
+    const parts = [];
+    if (!tasks.length) parts.push('No tasks yet');
+    else parts.push(tasks.length === scoped.length
+      ? `All ${plural(tasks.length, 'task')}`
+      : `${scoped.length} of ${plural(tasks.length, 'task')}`);
+    parts.push(rangeLabel());
+    if (n) parts.push(`${plural(n, 'filter')} on`);
+    $('scopeSummary').textContent = parts.join(' · ');
+    $('timelineRange').textContent = rangeLabel();
+  }
+
+  function renderHeatmap(scoped) {
     const host = $('activityHeatmap');
     if (!host) return;
 
@@ -758,7 +1101,7 @@
     const days = Array.from({ length: WEEKS * 7 }, (_, i) => shiftISO(startMonday, i));
 
     const perDay = {};
-    tasks.forEach((t) => {
+    scoped.forEach((t) => {
       if (!isLogged(t) || !t.date) return;
       perDay[t.date] = (perDay[t.date] || 0) + earned(t);
     });
@@ -777,13 +1120,13 @@
     }).join('');
   }
 
-  function renderPlatform() {
+  function renderPlatform(scoped) {
     const canvas = $('platformChart');
     const emptyEl = $('platformEmpty');
     if (!canvas || typeof Chart === 'undefined') return;
 
     const buckets = {};
-    tasks.forEach((t) => {
+    scoped.forEach((t) => {
       if (!isLogged(t)) return;
       const key = t.platform || 'General';
       buckets[key] = (buckets[key] || 0) + toDisplay(earned(t));
@@ -831,17 +1174,21 @@
     });
   }
 
+  /** Rebuilds the value lists from whatever is in the log; drops stale picks. */
   function renderFilterOptions() {
-    [['filterCategory', 'category', 'All categories'],
-     ['filterPlatform', 'platform', 'All platforms']].forEach(([id, key, allLabel]) => {
+    [['filterCategory',    'category',    'All categories'],
+     ['filterSubCategory', 'subCategory', 'All sub-categories'],
+     ['filterPlatform',    'platform',    'All platforms']].forEach(([id, key, allLabel]) => {
       const select = $(id);
+      if (!select) return;
       const values = Array.from(new Set(tasks.map((t) => t[key]).filter(Boolean))).sort();
-      const current = filters[key];
+      const current = scope[key];
       select.innerHTML = `<option value="ALL">${allLabel}</option>` +
         values.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
       if (values.includes(current)) select.value = current;
-      else { select.value = 'ALL'; filters[key] = 'ALL'; }
+      else { select.value = 'ALL'; scope[key] = 'ALL'; }
     });
+    $('filterStatus').value = scope.status;
   }
 
   /** Renders the repo link, or nothing when the task has no valid one. */
@@ -953,7 +1300,7 @@
 
     $('resultCount').textContent = tasks.length === 0
       ? 'No tasks'
-      : `${list.length} of ${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`;
+      : `${list.length} of ${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'} shown`;
     $('resultTotal').textContent = `${money(shown.amount)} earned`;
 
     const isEmpty = list.length === 0;
@@ -1003,30 +1350,16 @@
     boxPadding: 4
   };
 
-  function renderTimeline() {
+  function renderTimeline(scoped) {
     const canvas = $('timelineChart');
     if (!canvas || typeof Chart === 'undefined') return;
 
-    let days;
-    if (chartRange === 'all') {
-      const dates = tasks.map((t) => t.date).filter(Boolean).sort();
-      if (!dates.length) days = [todayISO()];
-      else {
-        const span = Math.min(
-          90,
-          Math.max(1, Math.round((new Date(dates[dates.length - 1]) - new Date(dates[0])) / 86400000) + 1)
-        );
-        days = Array.from({ length: span }, (_, i) => shiftISO(dates[dates.length - 1], -(span - 1 - i)));
-      }
-    } else {
-      const n = Number(chartRange);
-      days = Array.from({ length: n }, (_, i) => shiftISO(todayISO(), -(n - 1 - i)));
-    }
+    const days = chartDays(90, scoped);
 
     const perDay = days.map((d) =>
-      toDisplay(tasks.filter((t) => t.date === d).reduce((s, t) => s + earned(t), 0)));
+      toDisplay(scoped.filter((t) => t.date === d).reduce((s, t) => s + earned(t), 0)));
     const worked = days.map((d) =>
-      tasks.filter((t) => t.date === d).reduce((s, t) => s + t.timeSpent, 0));
+      scoped.filter((t) => t.date === d).reduce((s, t) => s + t.timeSpent, 0));
 
     if (timelineChart) timelineChart.destroy();
 
@@ -1142,12 +1475,12 @@
     }
   };
 
-  function renderCategory() {
+  function renderCategory(scoped) {
     const canvas = $('categoryChart');
     if (!canvas || typeof Chart === 'undefined') return;
 
     const buckets = {};
-    tasks.forEach((t) => {
+    scoped.forEach((t) => {
       const key = t.category || 'Uncategorised';
       buckets[key] = (buckets[key] || 0) +
         (chartMetric === 'amount' ? toDisplay(earned(t)) : 1);
@@ -1211,15 +1544,20 @@
   }
 
   function renderAll() {
-    renderSummary();
-    renderKpis();
-    renderSparklines();
+    // Options first: a filter pointing at a value that no longer exists is
+    // dropped here, before anything reads the slice.
     renderFilterOptions();
+
+    const scoped = scopedTasks();
+    renderScopeSummary(scoped);
+    renderFilterChips();
+    renderMetrics(scoped);
     renderList();
-    renderTimeline();
-    renderCategory();
-    renderHeatmap();
-    renderPlatform();
+    renderTimeline(scoped);
+    renderCategory(scoped);
+    renderHeatmap(scoped);
+    renderPlatform(scoped);
+    drawIcons();
   }
 
   /* --------------------------------------------------------------- forms */
@@ -1666,13 +2004,75 @@
     $('searchInput').addEventListener('input', (e) => {
       clearTimeout(searchTimer);
       const value = e.target.value;
-      searchTimer = setTimeout(() => { filters.search = value; renderList(); }, 140);
+      searchTimer = setTimeout(() => {
+        search = value;
+        renderList();
+        renderFilterChips();
+        drawIcons();
+      }, 140);
     });
 
-    $('filterStatus').addEventListener('change',   (e) => { filters.status   = e.target.value; renderList(); });
-    $('filterCategory').addEventListener('change', (e) => { filters.category = e.target.value; renderList(); });
-    $('filterPlatform').addEventListener('change', (e) => { filters.platform = e.target.value; renderList(); });
-    $('sortBy').addEventListener('change',         (e) => { filters.sort     = e.target.value; renderList(); });
+    // Every control below repaints the whole page, not just the table — the
+    // point of the filter bar is that the metrics move with it.
+    Object.entries(SELECT_FOR).forEach(([key, id]) => {
+      $(id).addEventListener('change', (e) => {
+        scope[key] = e.target.value;
+        saveSettings();
+        renderAll();
+      });
+    });
+
+    $('rangeFilter').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-range]');
+      if (!btn) return;
+      scope.range = btn.dataset.range;
+      syncRangeUI();
+      saveSettings();
+      renderAll();
+    });
+
+    ['rangeFrom', 'rangeTo'].forEach((id) => {
+      $(id).addEventListener('change', (e) => {
+        scope[id === 'rangeFrom' ? 'from' : 'to'] = e.target.value;
+        scope.range = 'custom';
+        syncRangeUI();
+        saveSettings();
+        renderAll();
+      });
+    });
+
+    $('btnResetFilters').addEventListener('click', () => {
+      if (!activeFilterCount() && !search.trim()) { toast('No filters to clear.', 'info'); return; }
+      resetFilters();
+      saveSettings();
+      renderAll();
+      toast('Filters cleared.', 'info');
+    });
+
+    $('filterChips').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-clear]');
+      if (!btn) return;
+      clearFilter(btn.dataset.clear);
+      saveSettings();
+      renderAll();
+    });
+
+    $('metricBoard').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-toggle-group]');
+      if (!btn) return;
+      const group = btn.closest('.metric-group');
+      const id = btn.dataset.toggleGroup;
+      const folded = !group.classList.contains('is-collapsed');
+      group.classList.toggle('is-collapsed', folded);
+      collapsed = folded ? collapsed.concat(id) : collapsed.filter((g) => g !== id);
+      saveSettings();
+    });
+
+    $('sortBy').addEventListener('change', (e) => {
+      sortBy = e.target.value;
+      saveSettings();
+      renderList();
+    });
 
     $('viewToggle').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-view]');
@@ -1684,22 +2084,13 @@
       renderList();
     });
 
-    $('rangeToggle').addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-range]');
-      if (!btn) return;
-      chartRange = btn.dataset.range;
-      el('#rangeToggle .is-active').classList.remove('is-active');
-      btn.classList.add('is-active');
-      renderTimeline();
-    });
-
     $('categoryToggle').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-metric]');
       if (!btn) return;
       chartMetric = btn.dataset.metric;
       el('#categoryToggle .is-active').classList.remove('is-active');
       btn.classList.add('is-active');
-      renderCategory();
+      renderCategory(scopedTasks());
     });
 
     $('btnDataMenu').addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
@@ -1757,11 +2148,14 @@
   async function init() {
     loadSettings();
     $('currencySelect').value = settings.currency;
+    $('sortBy').value = sortBy;
     updateSoundIcon();
 
     el(`#viewToggle [data-view="${settings.view}"]`)?.classList.add('is-active');
     if (settings.view !== 'table') el('#viewToggle [data-view="table"]').classList.remove('is-active');
 
+    buildMetricBoard();
+    syncFilterUI();
     chartTheme();
     bindEvents();
 

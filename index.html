@@ -58,111 +58,77 @@
 
 <main class="page">
 
-  <!-- ---------- Summary ---------- -->
-  <section class="stat-row" aria-label="Summary">
+  <!-- ---------- Global filters ---------- -->
+  <!-- Everything below this bar — every metric card, every chart and the task
+       log — reads from the same filtered slice, so one control set drives the
+       whole dashboard. -->
+  <section class="filterbar" aria-label="Dashboard filters">
 
-    <article class="stat">
-      <div class="stat-top">
-        <p class="eyebrow">Total earned</p>
-        <span class="stat-icon stat-icon-accent"><i data-lucide="wallet"></i></span>
+    <div class="filterbar-row">
+      <div class="filterbar-lead">
+        <span class="filterbar-icon" aria-hidden="true"><i data-lucide="sliders-horizontal"></i></span>
+        <div class="filterbar-lead-text">
+          <p class="filterbar-title">Filters</p>
+          <p class="filterbar-sub" id="scopeSummary">All tasks</p>
+        </div>
       </div>
-      <p class="stat-value"><span class="cur-sym">$</span><span id="statTotal">0.00</span></p>
-      <p class="stat-note">
-        <span id="statApproved">$0.00</span> approved
-        <span class="sep">·</span>
-        <span id="statPending" class="text-pending">$0.00</span> in review
-      </p>
-      <p class="stat-note" id="statIncentive" hidden></p>
-      <p class="stat-note" id="statPipeline" hidden></p>
-      <div class="spark" id="sparkTotal"></div>
-    </article>
 
-    <article class="stat">
-      <div class="stat-top">
-        <p class="eyebrow">Acceptance rate</p>
-        <span class="stat-icon stat-icon-accepted"><i data-lucide="badge-check"></i></span>
+      <div class="segmented segmented-flow" id="rangeFilter" role="group" aria-label="Date range">
+        <button type="button" class="seg" data-range="7">7D</button>
+        <button type="button" class="seg" data-range="30">30D</button>
+        <button type="button" class="seg" data-range="90">90D</button>
+        <button type="button" class="seg" data-range="month">Month</button>
+        <button type="button" class="seg is-active" data-range="all">All</button>
+        <button type="button" class="seg" data-range="custom">Custom</button>
       </div>
-      <p class="stat-value"><span id="statAcceptance">0</span><span class="stat-unit">%</span></p>
-      <div class="meter" id="statMeter" role="img" aria-label="Status breakdown">
-        <span class="meter-seg is-accepted" id="meterAccepted"></span>
-        <span class="meter-seg is-pending"  id="meterPending"></span>
-        <span class="meter-seg is-rejected" id="meterRejected"></span>
-        <span class="meter-seg is-progress" id="meterProgress"></span>
-      </div>
-      <p class="stat-note" id="statCounts">No tasks yet</p>
-      <div class="spark" id="sparkAcceptance"></div>
-    </article>
 
-    <article class="stat">
-      <div class="stat-top">
-        <p class="eyebrow">Hours</p>
-        <span class="stat-icon stat-icon-cool"><i data-lucide="clock-3"></i></span>
-      </div>
-      <p class="stat-value"><span id="statPaidHours">0.0</span><span class="stat-unit">billed</span></p>
-      <p class="stat-note">
-        <span id="statActualHours">0.0h</span> actually worked
-        <span class="sep">·</span>
-        <span id="statVariance">—</span>
-      </p>
-      <div class="spark" id="sparkHours"></div>
-    </article>
+      <div class="filterbar-selects">
+        <select id="filterStatus" class="select select-sm" aria-label="Filter by status">
+          <option value="ALL">All statuses</option>
+          <option value="IN_PROGRESS">In progress</option>
+          <option value="PENDING">In review</option>
+          <option value="ACCEPTED">Accepted</option>
+          <option value="REJECTED">Rejected</option>
+        </select>
 
-    <article class="stat">
-      <div class="stat-top">
-        <p class="eyebrow">Effective rate</p>
-        <span class="stat-icon stat-icon-warm"><i data-lucide="gauge"></i></span>
+        <select id="filterCategory" class="select select-sm" aria-label="Filter by category">
+          <option value="ALL">All categories</option>
+        </select>
+
+        <select id="filterSubCategory" class="select select-sm" aria-label="Filter by sub-category">
+          <option value="ALL">All sub-categories</option>
+        </select>
+
+        <select id="filterPlatform" class="select select-sm" aria-label="Filter by platform">
+          <option value="ALL">All platforms</option>
+        </select>
+
+        <button type="button" class="btn btn-ghost btn-sm" id="btnResetFilters" title="Clear every filter">
+          <i data-lucide="rotate-ccw"></i><span>Reset</span>
+        </button>
       </div>
-      <p class="stat-value"><span class="cur-sym">$</span><span id="statEffRate">0.00</span><span class="stat-unit">/hr</span></p>
-      <p class="stat-note">
-        Per hour actually worked
-        <span class="sep">·</span>
-        <span id="statBilledRate">$0.00/hr</span> billed
-      </p>
-      <div class="spark" id="sparkEffRate"></div>
-    </article>
+    </div>
+
+    <div class="filterbar-custom" id="customRange" hidden>
+      <label class="field-tiny">
+        <span>From</span>
+        <input type="date" id="rangeFrom" class="input input-sm" />
+      </label>
+      <label class="field-tiny">
+        <span>To</span>
+        <input type="date" id="rangeTo" class="input input-sm" />
+      </label>
+      <p class="field-tiny-note">Leave a side blank for an open-ended range.</p>
+    </div>
+
+    <div class="chip-row" id="filterChips" hidden></div>
 
   </section>
 
-  <!-- ---------- Secondary KPIs ---------- -->
-  <section class="kpi-row" aria-label="Additional metrics">
-
-    <article class="kpi">
-      <span class="kpi-icon kpi-icon-accent"><i data-lucide="calendar-days"></i></span>
-      <div class="kpi-body">
-        <p class="kpi-label">This week</p>
-        <p class="kpi-value"><span class="cur-sym">$</span><span id="kpiWeekAmount">0.00</span></p>
-        <p class="kpi-note" id="kpiWeekTrend">No data yet</p>
-      </div>
-    </article>
-
-    <article class="kpi">
-      <span class="kpi-icon kpi-icon-warm"><i data-lucide="flame"></i></span>
-      <div class="kpi-body">
-        <p class="kpi-label">Streak</p>
-        <p class="kpi-value"><span id="kpiStreak">0</span><span class="stat-unit">days</span></p>
-        <p class="kpi-note" id="kpiStreakBest">Best — days</p>
-      </div>
-    </article>
-
-    <article class="kpi">
-      <span class="kpi-icon kpi-icon-accepted"><i data-lucide="layers"></i></span>
-      <div class="kpi-body">
-        <p class="kpi-label">Avg per task</p>
-        <p class="kpi-value"><span class="cur-sym">$</span><span id="kpiAvgTask">0.00</span></p>
-        <p class="kpi-note" id="kpiAvgTaskCount">No tasks yet</p>
-      </div>
-    </article>
-
-    <article class="kpi">
-      <span class="kpi-icon kpi-icon-cool"><i data-lucide="server"></i></span>
-      <div class="kpi-body">
-        <p class="kpi-label">Top platform</p>
-        <p class="kpi-value kpi-value-text" id="kpiTopPlatform">—</p>
-        <p class="kpi-note" id="kpiTopPlatformShare">No data yet</p>
-      </div>
-    </article>
-
-  </section>
+  <!-- ---------- Metric board ----------
+       One number per card. Built in app.js from METRIC_GROUPS so the layout
+       and the maths stay described in a single place. -->
+  <div class="metric-board" id="metricBoard"></div>
 
   <!-- ---------- Charts ---------- -->
   <section class="chart-row">
@@ -173,11 +139,7 @@
           <h2 class="panel-title">Earnings over time</h2>
           <p class="panel-sub">Amount logged per day, with hours worked</p>
         </div>
-        <div class="segmented" id="rangeToggle" role="group" aria-label="Time range">
-          <button type="button" class="seg is-active" data-range="7">7 days</button>
-          <button type="button" class="seg" data-range="30">30 days</button>
-          <button type="button" class="seg" data-range="all">All</button>
-        </div>
+        <span class="panel-flag" id="timelineRange">All time</span>
       </div>
       <div class="chart-box"><canvas id="timelineChart"></canvas></div>
     </article>
@@ -244,30 +206,22 @@
   <!-- ---------- Task log ---------- -->
   <section class="panel">
 
+    <div class="panel-head">
+      <div>
+        <h2 class="panel-title">Task log</h2>
+        <p class="panel-sub" id="resultCount">No tasks</p>
+      </div>
+      <span class="panel-flag" id="resultTotal">$0.00 shown</span>
+    </div>
+
     <div class="toolbar">
       <div class="search">
         <i data-lucide="search" class="search-icon"></i>
         <input type="search" id="searchInput" placeholder="Search tasks, categories, platforms, notes" autocomplete="off" />
       </div>
 
-      <div class="toolbar-filters">
-        <select id="filterStatus" class="select" aria-label="Filter by status">
-          <option value="ALL">All statuses</option>
-          <option value="IN_PROGRESS">In progress</option>
-          <option value="PENDING">In review</option>
-          <option value="ACCEPTED">Accepted</option>
-          <option value="REJECTED">Rejected</option>
-        </select>
-
-        <select id="filterCategory" class="select" aria-label="Filter by category">
-          <option value="ALL">All categories</option>
-        </select>
-
-        <select id="filterPlatform" class="select" aria-label="Filter by platform">
-          <option value="ALL">All platforms</option>
-        </select>
-
-        <select id="sortBy" class="select" aria-label="Sort">
+      <div class="toolbar-end">
+        <select id="sortBy" class="select select-sm" aria-label="Sort">
           <option value="date-desc">Newest first</option>
           <option value="date-asc">Oldest first</option>
           <option value="amount-desc">Highest amount</option>
@@ -276,9 +230,7 @@
           <option value="paidHours-desc">Most hours billed</option>
           <option value="timeSpent-desc">Most time spent</option>
         </select>
-      </div>
 
-      <div class="toolbar-end">
         <div class="view-toggle segmented" id="viewToggle" role="group" aria-label="View">
           <button type="button" class="seg is-active" data-view="table" title="Table view"><i data-lucide="rows-3"></i></button>
           <button type="button" class="seg" data-view="cards" title="Card view"><i data-lucide="layout-grid"></i></button>
@@ -301,12 +253,6 @@
           </div>
         </div>
       </div>
-    </div>
-
-    <div class="result-bar">
-      <span id="resultCount">No tasks</span>
-      <span class="sep">·</span>
-      <span id="resultTotal">$0.00 shown</span>
     </div>
 
     <div class="table-scroll" id="tableView">
