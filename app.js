@@ -29,6 +29,12 @@
 
   const STATUSES = ['IN_PROGRESS', 'PENDING', 'ACCEPTED', 'REJECTED'];
 
+  // A task is either fresh work or a redo of something submitted earlier. This
+  // is a tag only — it never changes the earnings model.
+  const KIND_LABEL = { NORMAL: 'Normal', REWORK: 'Rework' };
+  const KINDS = ['NORMAL', 'REWORK'];
+  const kindOf = (task) => (task && task.kind === 'REWORK' ? 'REWORK' : 'NORMAL');
+
   // Date-range presets for the global filter bar. 'custom' reads scope.from/to.
   const RANGES = {
     '7':      { label: 'Last 7 days' },
@@ -55,7 +61,7 @@
      so one control set answers one question across the whole dashboard. */
   const scope = {
     range: 'all', from: '', to: '',
-    status: 'ALL', category: 'ALL', subCategory: 'ALL', platform: 'ALL'
+    status: 'ALL', kind: 'ALL', category: 'ALL', subCategory: 'ALL', platform: 'ALL'
   };
 
   /* Log-only controls — they narrow the table, not the metrics above it. */
@@ -68,6 +74,7 @@
   let timelineChart = null;
   let categoryChart = null;
   let platformChart = null;
+  let kindChart = null;
 
   let sb = null;             // supabase client
   let connection = 'offline'; // offline | syncing | live
@@ -159,6 +166,55 @@
     const h = Math.floor(total);
     const m = Math.round((total - h) * 60);
     return m === 60 ? `${h + 1}h 00m` : `${h}h ${String(m).padStart(2, '0')}m`;
+  }
+
+  /**
+   * Compact "how long since" label for a past timestamp — used to show how much
+   * time has passed since a task was actually logged (its created_at).
+   */
+  function timeAgo(iso) {
+    if (!iso) return '';
+    const then = new Date(iso).getTime();
+    if (!then || isNaN(then)) return '';
+    const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
+    if (s < 45)  return 'just now';
+    const m = Math.floor(s / 60);
+    if (m < 60)  return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24)  return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 14)  return `${d}d ago`;
+    const w = Math.floor(d / 7);
+    if (w < 9)   return `${w}w ago`;
+    const mo = Math.floor(d / 30);
+    if (mo < 12) return `${mo}mo ago`;
+    return `${Math.floor(d / 365)}y ago`;
+  }
+
+  /** Full timestamp for the hover title on a "logged … ago" label. */
+  function exactStamp(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleString('en-GB', {
+      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+  }
+
+  /** The "logged 3h ago" chip shared by the table and the card view. */
+  function loggedAgo(task) {
+    const ago = timeAgo(task.createdAt);
+    if (!ago) return '';
+    return `<span class="logged-ago" data-ago="${escapeHtml(task.createdAt || '')}"` +
+      ` title="Logged ${escapeHtml(exactStamp(task.createdAt))}">logged ${escapeHtml(ago)}</span>`;
+  }
+
+  /** Re-stamps every visible "logged … ago" chip so it stays current while open. */
+  function refreshAgoLabels() {
+    document.querySelectorAll('.logged-ago[data-ago]').forEach((node) => {
+      const iso = node.dataset.ago;
+      if (iso) node.textContent = 'logged ' + timeAgo(iso);
+    });
   }
 
   /**
@@ -329,6 +385,7 @@
       totalAmount: Number(row.total_amount) || 0,
       timeSpent:   Number(row.time_spent)   || 0,
       status:      row.status || 'PENDING',
+      kind:        row.task_kind === 'REWORK' ? 'REWORK' : 'NORMAL',
       date:        row.task_date,
       notes:       row.notes || '',
       incentive:   Number(row.incentive) || 0,
@@ -349,6 +406,7 @@
       incentive:    task.incentive || 0,
       time_spent:   task.timeSpent,
       status:       task.status,
+      task_kind:    task.kind === 'REWORK' ? 'REWORK' : 'NORMAL',
       task_date:    task.date,
       notes:        task.notes,
       repo_url:     task.repoUrl || ''
@@ -520,7 +578,7 @@
   }
 
   function activeFilterCount() {
-    return ['status', 'category', 'subCategory', 'platform'].filter((k) => scope[k] !== 'ALL').length
+    return ['status', 'kind', 'category', 'subCategory', 'platform'].filter((k) => scope[k] !== 'ALL').length
       + (scope.range !== 'all' ? 1 : 0);
   }
 
@@ -534,6 +592,7 @@
       if (from && (!t.date || t.date < from)) return false;
       if (to   && (!t.date || t.date > to))   return false;
       if (scope.status      !== 'ALL' && t.status      !== scope.status)      return false;
+      if (scope.kind        !== 'ALL' && kindOf(t)     !== scope.kind)        return false;
       if (scope.category    !== 'ALL' && t.category    !== scope.category)    return false;
       if (scope.subCategory !== 'ALL' && t.subCategory !== scope.subCategory) return false;
       if (scope.platform    !== 'ALL' && t.platform    !== scope.platform)    return false;
@@ -556,6 +615,7 @@
     const sorters = {
       'date-desc':      (a, b) => byDate(b, a) || String(b.createdAt).localeCompare(String(a.createdAt)),
       'date-asc':       (a, b) => byDate(a, b) || String(a.createdAt).localeCompare(String(b.createdAt)),
+      'logged-desc':    (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')),
       'amount-desc':    (a, b) => earned(b) - earned(a),
       'amount-asc':     (a, b) => earned(a) - earned(b),
       'rate-desc':      (a, b) => effRate(b) - effRate(a),
@@ -572,9 +632,16 @@
       paidHours: 0, actualHours: 0,
       accepted: 0, inReview: 0, rejected: 0, reviewed: 0,
       inProgress: 0, pipelineAmount: 0, pipelineHours: 0,
+      normalCount: 0, reworkCount: 0,
+      normalAmount: 0, reworkAmount: 0,
+      normalLogged: 0, reworkLogged: 0,
+      normalHours: 0, reworkHours: 0,
       count: list.length
     };
     list.forEach((x) => {
+      const rework = kindOf(x) === 'REWORK';
+      if (rework) t.reworkCount++; else t.normalCount++;
+
       // Pipeline work is excluded from every realised figure on the dashboard.
       if (!isLogged(x)) {
         t.inProgress++;
@@ -587,6 +654,12 @@
       t.paidHours   += x.paidHours;
       t.actualHours += x.timeSpent;
       t.reviewed++;
+
+      if (rework) {
+        t.reworkAmount += earned(x); t.reworkLogged++; t.reworkHours += x.timeSpent;
+      } else {
+        t.normalAmount += earned(x); t.normalLogged++; t.normalHours += x.timeSpent;
+      }
       if (x.status === 'ACCEPTED') {
         t.approved += earned(x);
         t.incentiveWon += incentiveOf(x);
@@ -749,10 +822,23 @@
         { id: 'topPlatform', label: 'Top platform',     icon: 'server',    tone: 'cool',   text: true },
         { id: 'topCategory', label: 'Top category',     icon: 'shapes',    tone: 'accent', text: true }
       ]
+    },
+    {
+      id: 'mix',
+      title: 'Normal vs rework',
+      sub: 'How much of the work is a redo',
+      metrics: [
+        { id: 'reworkShare',  label: 'Rework share',     icon: 'refresh-cw', tone: 'cool', lead: true, spark: 'rework' },
+        { id: 'normalCount',  label: 'Normal tasks',     icon: 'file-check', tone: 'accent' },
+        { id: 'reworkCount',  label: 'Rework tasks',     icon: 'rotate-ccw', tone: 'cool' },
+        { id: 'normalEarned', label: 'Normal earnings',  icon: 'wallet',    tone: 'accent' },
+        { id: 'reworkEarned', label: 'Rework earnings',  icon: 'coins',     tone: 'cool' },
+        { id: 'reworkRate',   label: 'Rework eff. rate', icon: 'gauge',     tone: 'warm' }
+      ]
     }
   ];
 
-  const SPARK_COLOR = { earned: 'var(--accent)', rate: 'var(--pending)' };
+  const SPARK_COLOR = { earned: 'var(--accent)', rate: 'var(--pending)', rework: 'var(--progress)' };
 
   function metricCardHtml(m) {
     let visual = '';
@@ -825,6 +911,9 @@
     const streaks = computeStreaks(scoped);
     const plat = topBucket(scoped, 'platform');
     const cat  = topBucket(scoped, 'category');
+
+    const reworkPct  = t.count ? (t.reworkCount / t.count) * 100 : 0;
+    const reworkEff  = t.reworkHours > 0 ? t.reworkAmount / t.reworkHours : 0;
 
     let weekNote;
     if (!thisWeek && !lastWeek) weekNote = 'Nothing logged in the last 7 days';
@@ -936,6 +1025,28 @@
         note: cat ? `${money(cat.value)} · ${Math.round(cat.share)}% of earnings` : 'No data yet'
       },
 
+      /* --- normal vs rework --- */
+      reworkShare: {
+        value: `${reworkPct.toFixed(reworkPct % 1 === 0 ? 0 : 1)}${unit('%')}`,
+        note: t.count
+          ? `${t.reworkCount} of ${plural(t.count, 'task')} in view ${t.reworkCount === 1 ? 'is' : 'are'} rework`
+          : 'No tasks in view'
+      },
+      normalCount: { value: String(t.normalCount), note: `${pct(t.normalCount)}% of tasks in view` },
+      reworkCount: { value: String(t.reworkCount), note: `${pct(t.reworkCount)}% of tasks in view` },
+      normalEarned: {
+        value: moneyHtml(t.normalAmount),
+        note: t.normalLogged ? `Across ${plural(t.normalLogged, 'logged task')}` : 'Nothing logged yet'
+      },
+      reworkEarned: {
+        value: moneyHtml(t.reworkAmount),
+        note: t.reworkLogged ? `Across ${plural(t.reworkLogged, 'logged task')}` : 'No rework logged yet'
+      },
+      reworkRate: {
+        value: `${moneyHtml(reworkEff)}${unit('/hr')}`,
+        note: t.reworkHours > 0 ? `Over ${t.reworkHours.toFixed(1)}h on rework` : 'Log rework time to see a rate'
+      },
+
       /* --- consumed by the meter, not a card of its own --- */
       _meter: t
     };
@@ -973,7 +1084,9 @@
         const hrs = list.reduce((s, t) => s + t.timeSpent, 0);
         const amt = list.reduce((s, t) => s + earned(t), 0);
         return hrs > 0 ? toDisplay(amt / hrs) : 0;
-      })
+      }),
+      rework: perDay.map((list) =>
+        toDisplay(list.filter((t) => kindOf(t) === 'REWORK').reduce((s, t) => s + earned(t), 0)))
     };
 
     $('metricBoard').querySelectorAll('[data-spark]').forEach((node) => {
@@ -1009,6 +1122,7 @@
 
   const SELECT_FOR = {
     status: 'filterStatus',
+    kind: 'filterKind',
     category: 'filterCategory',
     subCategory: 'filterSubCategory',
     platform: 'filterPlatform'
@@ -1037,6 +1151,7 @@
     scope.from = '';
     scope.to = '';
     scope.status = 'ALL';
+    scope.kind = 'ALL';
     scope.category = 'ALL';
     scope.subCategory = 'ALL';
     scope.platform = 'ALL';
@@ -1060,6 +1175,7 @@
 
     if (scope.range !== 'all')       chips.push(['range', 'Range', rangeLabel()]);
     if (scope.status !== 'ALL')      chips.push(['status', 'Status', STATUS_LABEL[scope.status] || scope.status]);
+    if (scope.kind !== 'ALL')        chips.push(['kind', 'Type', KIND_LABEL[scope.kind] || scope.kind]);
     if (scope.category !== 'ALL')    chips.push(['category', 'Category', scope.category]);
     if (scope.subCategory !== 'ALL') chips.push(['subCategory', 'Sub-category', scope.subCategory]);
     if (scope.platform !== 'ALL')    chips.push(['platform', 'Platform', scope.platform]);
@@ -1189,6 +1305,7 @@
       else { select.value = 'ALL'; scope[key] = 'ALL'; }
     });
     $('filterStatus').value = scope.status;
+    $('filterKind').value = KINDS.includes(scope.kind) ? scope.kind : 'ALL';
   }
 
   /** Renders the repo link, or nothing when the task has no valid one. */
@@ -1199,6 +1316,13 @@
     return `<a class="repo-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"
       title="${escapeHtml(label)}"><i data-lucide="link-2"></i>${
         withLabel ? `<span class="repo-label">${escapeHtml(label)}</span>` : ''}</a>`;
+  }
+
+  /** A small "Rework" tag for the log rows and cards; nothing for normal tasks. */
+  function kindTag(task) {
+    return kindOf(task) === 'REWORK'
+      ? '<span class="tag tag-rework" title="Rework — a redo of an earlier task">Rework</span>'
+      : '';
   }
 
   function statusPill(status) {
@@ -1233,7 +1357,9 @@
             <div class="ref-cell">
               <span class="cell-ref" data-act="copy-ref" data-ref="${escapeHtml(t.ref)}" title="Copy task ID">${escapeHtml(t.ref)}</span>
               ${repoLink(t, false)}
+              ${kindTag(t)}
             </div>
+            ${loggedAgo(t)}
           </td>
           <td>
             <div class="cell-stack">
@@ -1274,7 +1400,10 @@
             <p class="task-card-meta">${escapeHtml(t.ref)} · ${escapeHtml(t.platform)}</p>
             ${repoLink(t, true)}
           </div>
-          ${statusPill(t.status)}
+          <div class="task-card-pills">
+            ${kindTag(t)}
+            ${statusPill(t.status)}
+          </div>
         </div>
         <div class="task-card-stats">
           <div class="task-card-stat">
@@ -1288,7 +1417,7 @@
           <div class="task-card-stat"><span class="k">Rate</span><span class="v">${money(effRate(t))}</span></div>
         </div>
         <div class="task-card-foot">
-          <span>${escapeHtml(shortDate(t.date))}</span>
+          <span class="task-card-when">${escapeHtml(shortDate(t.date))}${loggedAgo(t) ? ' · ' + loggedAgo(t) : ''}</span>
           ${rowActions(t.id)}
         </div>
       </article>`).join('');
@@ -1543,6 +1672,76 @@
     });
   }
 
+  /** Normal vs rework split — follows the same Earnings/Tasks toggle as "By category". */
+  function renderKindSplit(scoped) {
+    const canvas  = $('kindChart');
+    const emptyEl = $('kindEmpty');
+    const flag    = $('kindFlag');
+    const byAmount = chartMetric === 'amount';
+    if (flag) flag.textContent = byAmount ? 'By earnings' : 'By tasks';
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    const value = { Normal: 0, Rework: 0 };
+    const count = { Normal: 0, Rework: 0 };
+    scoped.forEach((t) => {
+      const name = kindOf(t) === 'REWORK' ? 'Rework' : 'Normal';
+      count[name] += 1;
+      value[name] += byAmount ? toDisplay(earned(t)) : 1;
+    });
+
+    const KIND_COLORS = ['#30e089', '#22d3ee'];
+    const entries = [['Normal', value.Normal], ['Rework', value.Rework]];
+    const grand = entries.reduce((s, [, v]) => s + v, 0);
+    const fmt = (v) => (byAmount
+      ? fx().symbol + v.toLocaleString('en-US', { maximumFractionDigits: 0 })
+      : String(v));
+
+    $('kindLegend').innerHTML = entries.map(([name, v], i) => `
+      <li class="legend-item">
+        <span class="legend-dot" style="background:${KIND_COLORS[i]}"></span>
+        <span class="legend-name">${name} <span class="legend-count">· ${plural(count[name], 'task')}</span></span>
+        <span class="legend-value">${fmt(v)}</span>
+        <span class="legend-share">${grand ? Math.round((v / grand) * 100) : 0}%</span>
+      </li>`).join('');
+
+    if (emptyEl) emptyEl.hidden = grand > 0;
+    if (kindChart) { kindChart.destroy(); kindChart = null; }
+    if (!grand) return;
+
+    kindChart = new Chart(canvas.getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Normal', 'Rework'],
+        datasets: [{
+          data: entries.map(([, v]) => Math.round(v * 100) / 100),
+          backgroundColor: KIND_COLORS,
+          borderColor: '#0c1411',
+          borderWidth: 2,
+          hoverOffset: 5
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '68%',
+        layout: { padding: 4 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            ...tooltipStyle,
+            callbacks: {
+              title: (items) => items[0].label,
+              label: (c) => byAmount
+                ? `${fx().symbol}${c.parsed.toFixed(2)}`
+                : `${c.parsed} ${c.parsed === 1 ? 'task' : 'tasks'}`
+            }
+          }
+        }
+      },
+      plugins: [centreLabel]
+    });
+  }
+
   function renderAll() {
     // Options first: a filter pointing at a value that no longer exists is
     // dropped here, before anything reads the slice.
@@ -1555,6 +1754,7 @@
     renderList();
     renderTimeline(scoped);
     renderCategory(scoped);
+    renderKindSplit(scoped);
     renderHeatmap(scoped);
     renderPlatform(scoped);
     drawIcons();
@@ -1580,18 +1780,29 @@
     $('fieldIncentive').value   = task && task.incentive ? toDisplay(task.incentive).toFixed(2) : '';
     $('fieldRepo').value        = task ? task.repoUrl : '';
     $('fieldNotes').value       = task ? task.notes : '';
+    setKindToggle(task ? task.kind : 'NORMAL');
 
     applyStatusMode();
     updateReadout();
     $('scrim').hidden = false;
+    drawIcons();
     setTimeout(() => $(task ? 'fieldPaidHours' : 'fieldRef').focus(), 30);
   }
 
   function closeDialog() { $('scrim').hidden = true; }
 
+  /** Reflects the Normal / Rework choice into the hidden field and the toggle. */
+  function setKindToggle(kind) {
+    const k = kind === 'REWORK' ? 'REWORK' : 'NORMAL';
+    $('fieldKind').value = k;
+    $('kindToggle').querySelectorAll('[data-kind]').forEach((b) => {
+      b.classList.toggle('is-active', b.dataset.kind === k);
+    });
+  }
+
   /**
    * An in-progress task has not finished, so its hours and pay are estimates.
-   * Don't demand them, and label them honestly.
+   * Label them honestly. Nothing but the Task ID is ever required.
    */
   function applyStatusMode() {
     const wip = $('fieldStatus').value === 'IN_PROGRESS';
@@ -1605,10 +1816,6 @@
     Object.keys(labels).forEach((id) => {
       const label = el(`label[for="${id}"]`);
       if (label) label.textContent = labels[id];
-    });
-
-    ['fieldPaidHours', 'fieldAmount', 'fieldTimeSpent'].forEach((id) => {
-      $(id).required = !wip;
     });
 
     $('hintIncentive').textContent = wip ? 'Expected' : 'On acceptance';
@@ -1669,17 +1876,17 @@
 
     const rowId = $('fieldRowId').value;
     const ref   = $('fieldRef').value.trim();
-    const category = $('fieldCategory').value.trim();
 
-    if (!ref || !category) {
-      toast('Task ID and category are required.', 'warning');
+    if (!ref) {
+      toast('A Task ID is required.', 'warning');
+      $('fieldRef').focus();
       return;
     }
 
     const task = {
       ref,
       platform:    $('fieldPlatform').value.trim() || 'General',
-      category,
+      category:    $('fieldCategory').value.trim() || 'Uncategorised',
       subCategory: $('fieldSubCategory').value.trim() || 'General',
       paidHours:   Math.max(0, parseFloat($('fieldPaidHours').value) || 0),
       hourlyRate:  toBase(parseFloat($('fieldRate').value) || 0),
@@ -1687,6 +1894,7 @@
       incentive:   toBase(parseFloat($('fieldIncentive').value) || 0),
       timeSpent:   Math.max(0, parseFloat($('fieldTimeSpent').value) || 0),
       status:      $('fieldStatus').value,
+      kind:        $('fieldKind').value === 'REWORK' ? 'REWORK' : 'NORMAL',
       date:        $('fieldDate').value || todayISO(),
       notes:       $('fieldNotes').value.trim(),
       repoUrl:     safeUrl($('fieldRepo').value)
@@ -1788,10 +1996,11 @@
     if (!tasks.length) { toast('Nothing to export.', 'warning'); return; }
     const head = ['Task ID', 'Date', 'Platform', 'Category', 'Sub-category',
                   'Hours billed', 'Hourly rate (USD)', 'Amount (USD)',
-                  'Incentive (USD)', 'Time spent', 'Status', 'Repo link', 'Notes'];
+                  'Incentive (USD)', 'Time spent', 'Status', 'Type', 'Repo link', 'Notes'];
     const body = tasks.map((t) => [
       t.ref, t.date, t.platform, t.category, t.subCategory,
-      t.paidHours, t.hourlyRate, t.totalAmount, t.incentive, t.timeSpent, t.status, t.repoUrl, t.notes
+      t.paidHours, t.hourlyRate, t.totalAmount, t.incentive, t.timeSpent, t.status,
+      kindOf(t), t.repoUrl, t.notes
     ].map(csvCell).join(','));
 
     download([head.map(csvCell).join(','), ...body].join('\r\n'),
@@ -1825,6 +2034,7 @@
 
   function normalise(raw) {
     const status = String(raw.status || 'PENDING').toUpperCase();
+    const kind = String(raw.kind || raw.task_kind || raw.type || 'NORMAL').toUpperCase();
     return {
       ref:         String(raw.ref || raw.id || newRef(raw.category)),
       platform:    String(raw.platform || 'General'),
@@ -1835,6 +2045,7 @@
       totalAmount: Math.max(0, Number(raw.totalAmount) || 0),
       timeSpent:   Math.max(0, Number(raw.timeSpent) || Number(raw.paidHours) || 0),
       status:      STATUSES.includes(status) ? status : 'PENDING',
+      kind:        KINDS.includes(kind) ? kind : 'NORMAL',
       date:        /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : todayISO(),
       notes:       String(raw.notes || ''),
       incentive:   Math.max(0, Number(raw.incentive) || 0),
@@ -1858,13 +2069,20 @@
       } else {
         const lines = text.split(/\r?\n/).filter((l) => l.trim());
         if (lines.length < 2) throw new Error('No data rows');
+        // The 'Type' column was added later; older exports don't have it, so
+        // read the header and shift the trailing columns accordingly.
+        const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+        const hasType = header.includes('type');
         parsed = lines.slice(1).map((line) => {
           const c = splitCsvLine(line);
-          return normalise({
+          const base = {
             ref: c[0], date: c[1], platform: c[2], category: c[3], subCategory: c[4],
             paidHours: c[5], hourlyRate: c[6], totalAmount: c[7], incentive: c[8],
-            timeSpent: c[9], status: c[10], repoUrl: c[11], notes: c[12]
-          });
+            timeSpent: c[9], status: c[10]
+          };
+          return normalise(hasType
+            ? { ...base, kind: c[11], repoUrl: c[12], notes: c[13] }
+            : { ...base, repoUrl: c[11], notes: c[12] });
         });
       }
     } catch (err) {
@@ -1891,18 +2109,18 @@
   }
 
   const SAMPLE = [
-    ['RLHF-9421', 'DataAnnotation', 'RLHF & Reasoning',       'Multi-turn logic',    1.50, 42, 63.00, 1.15, 'ACCEPTED', 0,  'Calculus reasoning chain, approved without edits.'],
-    ['CODE-8834', 'Outlier AI',     'Coding & Software',      'Python code generation', 2.00, 50, 100.00, 1.60, 'ACCEPTED', 0,  'AST parser plus unit tests.'],
-    ['FACT-7712', 'Alignerr',       'Factuality & Grounding', 'Hallucination detection', 0.75, 40, 30.00, 0.80, 'PENDING',  1,  'Citation audit on a financial summary.'],
-    ['SAFE-6520', 'Invisible AI',   'Safety & Red Teaming',   'Adversarial testing', 1.25, 45, 56.25, 0.95, 'ACCEPTED', 2,  'Robustness pass on encoded payloads.'],
-    ['MATH-5419', 'DataAnnotation', 'Math & Science',         'Multi-turn logic',    2.50, 42, 105.00, 2.10, 'ACCEPTED', 3,  'Step-by-step differential equation checks.'],
-    ['EVAL-4310', 'Scale AI',       'Model Evaluation',       'Preference ranking',  1.00, 38, 38.00, 1.20, 'REJECTED', 4,  'Rubric dispute: creativity vs factuality weighting.'],
-    ['CODE-3928', 'Outlier AI',     'Coding & Software',      'Code review & fix',   1.75, 50, 87.50, 1.40, 'ACCEPTED', 5,  'Race condition in async queue handling.'],
-    ['MULT-2841', 'Mindrift',       'Multimodal & Vision',    'Rubric grading',      1.20, 36, 43.20, 1.35, 'PENDING',  6,  'Chart-reading accuracy across 40 samples.'],
-    ['CREA-1750', 'Mercor',         'Creative & Writing',     'Prompt optimisation', 0.90, 44, 39.60, 0.70, 'ACCEPTED', 7,  'Tone-matching rewrites, all accepted.'],
-    ['RLHF-1102', 'DataAnnotation', 'RLHF & Reasoning',       'Preference ranking',  2.25, 42, 94.50, 2.00, 'ACCEPTED', 8,  'Side-by-side comparisons, long context.']
-  ].map(([ref, platform, category, subCategory, paidHours, hourlyRate, totalAmount, timeSpent, status, ago, notes]) => ({
-    ref, platform, category, subCategory, paidHours, hourlyRate, totalAmount, timeSpent, status,
+    ['RLHF-9421', 'DataAnnotation', 'RLHF & Reasoning',       'Multi-turn logic',    1.50, 42, 63.00, 1.15, 'ACCEPTED', 0,  'NORMAL', 'Calculus reasoning chain, approved without edits.'],
+    ['CODE-8834', 'Outlier AI',     'Coding & Software',      'Python code generation', 2.00, 50, 100.00, 1.60, 'ACCEPTED', 0,  'NORMAL', 'AST parser plus unit tests.'],
+    ['FACT-7712', 'Alignerr',       'Factuality & Grounding', 'Hallucination detection', 0.75, 40, 30.00, 0.80, 'PENDING',  1,  'REWORK', 'Citation audit — reopened after reviewer notes.'],
+    ['SAFE-6520', 'Invisible AI',   'Safety & Red Teaming',   'Adversarial testing', 1.25, 45, 56.25, 0.95, 'ACCEPTED', 2,  'NORMAL', 'Robustness pass on encoded payloads.'],
+    ['MATH-5419', 'DataAnnotation', 'Math & Science',         'Multi-turn logic',    2.50, 42, 105.00, 2.10, 'ACCEPTED', 3,  'NORMAL', 'Step-by-step differential equation checks.'],
+    ['EVAL-4310', 'Scale AI',       'Model Evaluation',       'Preference ranking',  1.00, 38, 38.00, 1.20, 'REJECTED', 4,  'REWORK', 'Second attempt at a disputed rubric call.'],
+    ['CODE-3928', 'Outlier AI',     'Coding & Software',      'Code review & fix',   1.75, 50, 87.50, 1.40, 'ACCEPTED', 5,  'NORMAL', 'Race condition in async queue handling.'],
+    ['MULT-2841', 'Mindrift',       'Multimodal & Vision',    'Rubric grading',      1.20, 36, 43.20, 1.35, 'PENDING',  6,  'REWORK', 'Chart-reading pass redone with the new rubric.'],
+    ['CREA-1750', 'Mercor',         'Creative & Writing',     'Prompt optimisation', 0.90, 44, 39.60, 0.70, 'ACCEPTED', 7,  'NORMAL', 'Tone-matching rewrites, all accepted.'],
+    ['RLHF-1102', 'DataAnnotation', 'RLHF & Reasoning',       'Preference ranking',  2.25, 42, 94.50, 2.00, 'ACCEPTED', 8,  'NORMAL', 'Side-by-side comparisons, long context.']
+  ].map(([ref, platform, category, subCategory, paidHours, hourlyRate, totalAmount, timeSpent, status, ago, kind, notes]) => ({
+    ref, platform, category, subCategory, paidHours, hourlyRate, totalAmount, timeSpent, status, kind,
     date: shiftISO(todayISO(), -ago), notes
   }));
 
@@ -1963,6 +2181,11 @@
     $('fieldStatus').addEventListener('change', () => {
       applyStatusMode();
       updateReadout();
+    });
+
+    $('kindToggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-kind]');
+      if (btn) setKindToggle(btn.dataset.kind);
     });
 
     $('btnGenerateRef').addEventListener('click', () => {
@@ -2090,7 +2313,9 @@
       chartMetric = btn.dataset.metric;
       el('#categoryToggle .is-active').classList.remove('is-active');
       btn.classList.add('is-active');
-      renderCategory(scopedTasks());
+      const scoped = scopedTasks();
+      renderCategory(scoped);
+      renderKindSplit(scoped);
     });
 
     $('btnDataMenu').addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
@@ -2158,6 +2383,9 @@
     syncFilterUI();
     chartTheme();
     bindEvents();
+
+    // Keep the "logged … ago" labels honest without a full re-render.
+    setInterval(refreshAgoLabels, 60000);
 
     // Paint the cached copy first so the page is never blank while we fetch.
     tasks = readCache();

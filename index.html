@@ -91,6 +91,12 @@
           <option value="REJECTED">Rejected</option>
         </select>
 
+        <select id="filterKind" class="select select-sm" aria-label="Filter by task type">
+          <option value="ALL">All types</option>
+          <option value="NORMAL">Normal</option>
+          <option value="REWORK">Rework</option>
+        </select>
+
         <select id="filterCategory" class="select select-sm" aria-label="Filter by category">
           <option value="ALL">All categories</option>
         </select>
@@ -203,6 +209,26 @@
 
   </section>
 
+  <!-- ---------- Normal vs rework ---------- -->
+  <section class="chart-row chart-row-solo">
+
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h2 class="panel-title">Normal vs rework</h2>
+          <p class="panel-sub">How much of the filtered work is a redo</p>
+        </div>
+        <span class="panel-flag" id="kindFlag">By earnings</span>
+      </div>
+      <div class="chart-box chart-box-split chart-box-kind">
+        <div class="donut-wrap"><canvas id="kindChart"></canvas></div>
+        <ul class="legend" id="kindLegend"></ul>
+        <p class="chart-empty" id="kindEmpty" hidden>No data yet</p>
+      </div>
+    </article>
+
+  </section>
+
   <!-- ---------- Task log ---------- -->
   <section class="panel">
 
@@ -224,6 +250,7 @@
         <select id="sortBy" class="select select-sm" aria-label="Sort">
           <option value="date-desc">Newest first</option>
           <option value="date-asc">Oldest first</option>
+          <option value="logged-desc">Recently logged</option>
           <option value="amount-desc">Highest amount</option>
           <option value="amount-asc">Lowest amount</option>
           <option value="rate-desc">Best effective rate</option>
@@ -303,13 +330,22 @@
     <div class="dialog-head">
       <div>
         <h2 class="dialog-title" id="dialogTitle">New task</h2>
-        <p class="dialog-sub">Amounts in <span id="dialogCurrency">USD</span></p>
+        <p class="dialog-sub">Amounts in <span id="dialogCurrency">USD</span> · only a Task ID is required</p>
       </div>
       <button class="btn-icon" id="btnCloseDialog" type="button" title="Close"><i data-lucide="x"></i></button>
     </div>
 
     <form id="taskForm" class="form" autocomplete="off">
       <input type="hidden" id="fieldRowId" />
+      <input type="hidden" id="fieldKind" value="NORMAL" />
+
+      <div class="field">
+        <div class="field-head"><label>Task type</label></div>
+        <div class="segmented seg-wide" id="kindToggle" role="group" aria-label="Task type">
+          <button type="button" class="seg is-active" data-kind="NORMAL"><i data-lucide="file-plus-2"></i><span>Normal</span></button>
+          <button type="button" class="seg" data-kind="REWORK"><i data-lucide="rotate-ccw"></i><span>Rework</span></button>
+        </div>
+      </div>
 
       <div class="grid-2">
         <div class="field">
@@ -340,7 +376,7 @@
       <div class="grid-2">
         <div class="field">
           <div class="field-head"><label for="fieldCategory">Category</label></div>
-          <input type="text" id="fieldCategory" class="input" placeholder="RLHF &amp; Reasoning" list="categoryList" required />
+          <input type="text" id="fieldCategory" class="input" placeholder="RLHF &amp; Reasoning" list="categoryList" />
           <datalist id="categoryList">
             <option value="Coding &amp; Software"></option>
             <option value="RLHF &amp; Reasoning"></option>
@@ -375,7 +411,7 @@
             <label for="fieldPaidHours">Hours billed</label>
             <span class="hint" id="hintPaidHours">0h 00m</span>
           </div>
-          <input type="number" step="0.01" min="0" id="fieldPaidHours" class="input" placeholder="1.25" required />
+          <input type="number" step="0.01" min="0" id="fieldPaidHours" class="input" placeholder="1.25" />
         </div>
 
         <div class="field">
@@ -393,7 +429,7 @@
           </div>
           <div class="input-affix">
             <span class="affix cur-sym">$</span>
-            <input type="number" step="0.01" min="0" id="fieldAmount" class="input" placeholder="50.00" required />
+            <input type="number" step="0.01" min="0" id="fieldAmount" class="input" placeholder="50.00" />
           </div>
         </div>
       </div>
@@ -415,7 +451,7 @@
             <label for="fieldTimeSpent">Time actually spent</label>
             <span class="hint" id="hintTimeSpent">0h 00m</span>
           </div>
-          <input type="number" step="0.01" min="0" id="fieldTimeSpent" class="input" placeholder="0.85" required />
+          <input type="number" step="0.01" min="0" id="fieldTimeSpent" class="input" placeholder="0.85" />
         </div>
 
         <div class="field">
@@ -435,7 +471,7 @@
             <label for="fieldDate">Date</label>
             <button type="button" class="link-btn" id="btnDateToday">Today</button>
           </div>
-          <input type="date" id="fieldDate" class="input" required />
+          <input type="date" id="fieldDate" class="input" />
         </div>
 
         <div class="field">

@@ -841,6 +841,7 @@ input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
   grid-template-columns: 1.75fr 1fr;
   gap: 12px;
 }
+.chart-row-solo { grid-template-columns: 1fr; }
 
 .chart-box {
   position: relative;
@@ -857,6 +858,24 @@ input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
 }
 
 .donut-wrap { position: relative; flex: 0 0 118px; min-height: 0; }
+
+/* Normal vs rework — doughnut and legend side by side across the full width */
+.chart-box-kind {
+  flex-direction: row;
+  align-items: center;
+  gap: 30px;
+  height: auto;
+  min-height: 200px;
+  padding: 20px 22px;
+}
+.chart-box-kind .donut-wrap { flex: 0 0 190px; min-width: 0; height: 180px; }
+.chart-box-kind .legend { flex: 1 1 auto; overflow: visible; gap: 4px; }
+.legend-count { color: var(--text-3); font-weight: 400; }
+
+@media (max-width: 620px) {
+  .chart-box-kind { flex-direction: column; gap: 14px; }
+  .chart-box-kind .donut-wrap { flex-basis: 160px; height: 160px; width: 100%; }
+}
 
 /* horizontal bar chart panel (platform breakdown) */
 .chart-box-bar { position: relative; }
@@ -996,6 +1015,11 @@ input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
 .seg.is-active { background: var(--surface-3); color: var(--text); }
 .seg i { width: 15px; height: 15px; }
 
+/* full-width segmented control — used for the Normal / Rework picker in the form */
+.segmented.seg-wide { display: flex; width: 100%; }
+.segmented.seg-wide .seg { flex: 1; height: 30px; gap: 6px; }
+.segmented.seg-wide .seg.is-active { color: var(--accent); }
+
 /* ---------------------------------------------------------------- toolbar */
 
 .toolbar {
@@ -1127,6 +1151,31 @@ input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
 
 .ref-cell { display: flex; align-items: center; gap: 6px; }
 
+/* small type tag (Rework); nothing renders for a normal task */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 7px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+.tag-rework { color: var(--progress); background: var(--progress-bg); }
+
+/* "logged 3h ago" — how long since the row was actually saved */
+.logged-ago {
+  display: block;
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.task-card-when .logged-ago { display: inline; margin-top: 0; }
+
 .repo-link {
   display: inline-flex;
   align-items: center;
@@ -1256,6 +1305,14 @@ input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
 .task-card-title { font-size: 13px; font-weight: 500; line-height: 1.35; }
 .task-card-meta  { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .task-card-head .repo-link { margin-top: 4px; max-width: 100%; }
+.task-card-pills {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.task-card-when { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .task-card-stats {
   display: grid;
